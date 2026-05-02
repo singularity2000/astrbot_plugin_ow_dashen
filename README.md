@@ -152,6 +152,51 @@
 
 建议第一次先只配 1 个账号，确认能用后再加备用号。
 
+## 目录结构
+
+下面用相对路径说明插件在不同目录下各文件的职责。
+
+```text
+插件代码目录（data/plugins/astrbot_plugin_ow_dashen/）
+├─ main.py                                   # AstrBot 插件入口，命令注册、适配层、图片发送、缓存清理
+├─ metadata.yaml                             # 插件元数据
+├─ _conf_schema.json                         # WebUI 配置项定义
+├─ README.md                                 # 使用说明
+├─ LICENSE                                   # 开源协议
+├─ logo.png                                  # 插件图标
+├─ data/
+│  ├─ cmd_config.json                        # 文转图模板相关配置
+│  └─ t2i_templates/                         # AstrBot 文转图 HTML 模板
+└─ overstats/                                # 从 Overstats 移植来的核心逻辑
+   ├─ paths.py                               # 统一管理插件独立数据目录路径
+   ├─ config/                                # Overstats 配置注入与加载
+   ├─ src/                                   # 核心业务代码
+   └─ res/                                   # 随插件分发的静态资源（字体、底图、图标等，只读资源）
+
+AstrBot 插件配置目录（data/config/）
+└─ astrbot_plugin_ow_dashen_config.json      # WebUI 保存的插件配置，如 role_id、token、输出偏好、功能开关
+
+AstrBot 插件独立数据目录（data/plugin_data/astrbot_plugin_ow_dashen/）
+├─ bindings.json                             # 用户绑定的 BattleTag 映射
+├─ temp/                                     # 发送图片前写入的临时图片目录
+└─ overstats/
+   ├─ db/
+   │  ├─ match_stats.sqlite3                 # 本地比赛统计 / 总结相关数据库
+   │  └─ ow_hero_leaderboard.sqlite3         # 英雄热度 / 英雄曲线数据库
+   ├─ cache_img/                             # 下载到本地的头像 / 远程资源图缓存
+   ├─ query_tool.json                        # 从网易大神同步并本地缓存的 query tool 配置
+   ├─ query_tool_assets/                     # query tool 相关静态资源缓存
+   │  └─ extra/                              # 总结模块额外下载资源缓存
+   └─ dashen_summary_runtime_cache/
+      └─ rank_distribution_daily/            # 总结模块运行时缓存（如段位分布日缓存）
+```
+
+说明：
+
+- `data/plugins/astrbot_plugin_ow_dashen/` 是插件代码与只读静态资源目录。
+- `data/config/astrbot_plugin_ow_dashen_config.json` 是插件配置目录，只保存用户显式配置。
+- `data/plugin_data/astrbot_plugin_ow_dashen/` 是插件运行时数据目录，所有数据库、缓存、绑定文件、临时图片都应保存在这里，方便跨平台部署与卸载时统一清理。
+
 ## 快速上手
 
 推荐按这个顺序测试：
@@ -275,9 +320,3 @@
 不要把 token 等涉及个人隐私的敏感信息发到公开仓库、公开群聊或 issue。
 
 不要在与网易大神官方相关的平台上宣传此插件。
-
-## 插件已知存在的问题（欢迎提出Issue、提交PR）
-
-1. 插件长期运行由于产生图片缓存会导致体积膨胀。已有“ow 清理缓存”指令，但不能确定是否能完全清理掉临时数据。缓存保存的位置不够规范。
-2. 部分命令，如“ow 英雄曲线 伊拉锐 快速 铂金”或“ow 本周总结”可能返回查询失败。
-

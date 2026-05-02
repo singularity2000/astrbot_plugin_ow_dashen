@@ -5,6 +5,7 @@ from collections import deque
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 import hashlib
+import logging
 import os
 from pathlib import Path
 import random
@@ -15,15 +16,19 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TYPE_CH
 
 import httpx
 
+logger = logging.getLogger("astrbot")
+
 try:
     from overstats.config import DashenClientConfig, DashenCredentialConfig, get_dashen_client_config
     from overstats.config import config as overstats_config
+    from overstats.paths import ensure_dir, get_overstats_data_dir
     from overstats.src.db.player_identity import record_identity_payload
     from overstats.src.db.request_metrics import normalize_request_metric_url
 except ModuleNotFoundError:
     try:
         from config import config as overstats_config
         from config.loader import DashenClientConfig, DashenCredentialConfig, get_dashen_client_config
+        from paths import ensure_dir, get_overstats_data_dir
         from src.db.player_identity import record_identity_payload
         from src.db.request_metrics import normalize_request_metric_url
     except ModuleNotFoundError:
@@ -36,6 +41,13 @@ except ModuleNotFoundError:
 
         def get_dashen_client_config() -> Any:
             raise RuntimeError("Dashen client config loader is unavailable.")
+
+        def get_overstats_data_dir() -> Path:
+            return Path.cwd()
+
+        def ensure_dir(path: Path) -> Path:
+            path.mkdir(parents=True, exist_ok=True)
+            return path
 
 if TYPE_CHECKING:
     try:
@@ -75,7 +87,7 @@ JD_EQ_COMMUNITY_URL = (
     "community_play_staduim_recommend_mods_data"
 )
 OVERFAST_PLAYERS_URL = "https://overfast-api.tekrop.fr/players"
-REMOTE_IMAGE_CACHE_DIR = Path(__file__).resolve().parents[2] / "res" / "cache_img"
+REMOTE_IMAGE_CACHE_DIR = ensure_dir(get_overstats_data_dir() / "cache_img")
 
 CLIENT_CONFIG: Optional[DashenClientConfig] = None
 OW_ESPORTS_URL = ""
@@ -140,7 +152,7 @@ HTTP_LIMITS = httpx.Limits(
 
 INTERNATIONAL_PROXY = ""
 NETEASE_PROXIES: Tuple[Optional[str], ...] = (None,)
-REQUEST_LOG_ENABLED = os.getenv("OVERSTATS_DASHEN_LOG_REQUESTS", "1").strip().lower() not in {"0", "false", "no", "off"}
+REQUEST_LOG_ENABLED = os.getenv("OVERSTATS_DASHEN_LOG_REQUESTS", "0").strip().lower() not in {"0", "false", "no", "off"}
 REQUEST_LOG_WINDOW_SECONDS = max(
     0.2,
     float(os.getenv("OVERSTATS_DASHEN_LOG_WINDOW_SECONDS", "1.0") or "1.0"),
@@ -241,7 +253,7 @@ class DashenCredentialPool:
         cooldown_until = now + self._cooldown_seconds
         with self._lock:
             self._cooldowns[credential.name] = cooldown_until
-        print(
+        logger.debug(
             "[overstats] dashen credential cooled down "
             f"account={credential.name} role_id={credential.role_id} "
             f"cooldown_seconds={int(self._cooldown_seconds)} reason={reason}"
@@ -572,7 +584,7 @@ class SafeClient:
     ) -> None:
         cur_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         context_suffix = f" {log_context}" if log_context else ""
-        print(
+        logger.debug(
             f"[{cur_time}] [SafeClient {method} Error] "
             f"route={route.label} slot={slot_kind} attempt={attempt} cost_ms={cost_ms} "
             f"retry={will_retry} active={self._active_count()} slow={self._slow_count()}"
@@ -592,7 +604,7 @@ class SafeClient:
             return
         cur_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         context_suffix = f" {log_context}" if log_context else ""
-        print(
+        logger.debug(
             f"[{cur_time}] [SafeClient {method} Slow] "
             f"route={route.label} slot={slot_kind} cost_ms={cost_ms} "
             f"active={self._active_count()} slow={self._slow_count()}{context_suffix} URL: {url}"
@@ -614,7 +626,7 @@ class SafeClient:
         start_rps = _record_request_window_sample(_request_started_timestamps, now)
         cur_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         context_suffix = f" {log_context}" if log_context else ""
-        print(
+        logger.debug(
             f"[{cur_time}] [SafeClient {method} Start] "
             f"id={request_id} route={route.label} slot={slot_kind} attempt={attempt} "
             f"active={self._active_count()} slow={self._slow_count()} start_rps={start_rps}/{REQUEST_LOG_WINDOW_SECONDS:.1f}s"
@@ -640,7 +652,7 @@ class SafeClient:
         start_rps = _current_request_window_count(_request_started_timestamps, now)
         cur_time = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
         context_suffix = f" {log_context}" if log_context else ""
-        print(
+        logger.debug(
             f"[{cur_time}] [SafeClient {method} Done] "
             f"id={request_id} route={route.label} slot={slot_kind} attempt={attempt} status={response.status_code} "
             f"cost_ms={cost_ms} active={self._active_count()} slow={self._slow_count()} "

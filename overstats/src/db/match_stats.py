@@ -7,8 +7,13 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional
 
+try:
+    from overstats.paths import ensure_dir, get_overstats_data_dir
+except ModuleNotFoundError:
+    from paths import ensure_dir, get_overstats_data_dir
 
-MATCH_STATS_DB_PATH = Path(__file__).resolve().parent / "match_stats.sqlite3"
+
+MATCH_STATS_DB_PATH = ensure_dir(get_overstats_data_dir() / "db") / "match_stats.sqlite3"
 PLAYER_IDENTITY_TABLE = "player_identity_map"
 
 

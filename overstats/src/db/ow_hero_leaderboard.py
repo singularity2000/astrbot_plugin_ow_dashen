@@ -6,8 +6,13 @@ from pathlib import Path
 import sqlite3
 from typing import Any, Iterable, Mapping, Optional
 
+try:
+    from overstats.paths import ensure_dir, get_overstats_data_dir
+except ModuleNotFoundError:
+    from paths import ensure_dir, get_overstats_data_dir
 
-OW_HERO_LEADERBOARD_DB_PATH = Path(__file__).resolve().parent / "ow_hero_leaderboard.sqlite3"
+
+OW_HERO_LEADERBOARD_DB_PATH = ensure_dir(get_overstats_data_dir() / "db") / "ow_hero_leaderboard.sqlite3"
 HERO_LEADERBOARD_CN_TABLE = "hero_leaderboard_cn"
 HERO_LEADERBOARD_GLOBAL_TABLE = "hero_leaderboard_global"
 _VALID_TABLES = {HERO_LEADERBOARD_CN_TABLE, HERO_LEADERBOARD_GLOBAL_TABLE}

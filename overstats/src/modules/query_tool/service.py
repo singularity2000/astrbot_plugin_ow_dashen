@@ -4,6 +4,7 @@ import asyncio
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 from pathlib import Path
@@ -14,12 +15,19 @@ from urllib.parse import urlparse
 
 import httpx
 
+logger = logging.getLogger("astrbot")
+
 from .requests import MANUAL_KEYS, REMOTE_HEADERS, QueryToolRequests
 
+try:
+    from overstats.paths import ensure_dir, get_overstats_data_dir
+except ModuleNotFoundError:
+    from paths import ensure_dir, get_overstats_data_dir
 
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
-QUERY_TOOL_PATH = PROJECT_ROOT / "overstats" / "res" / "query_tool.json"
-QUERY_TOOL_ASSET_DIR = PROJECT_ROOT / "overstats" / "res" / "query_tool_assets"
+
+OVERSTATS_DATA_DIR = get_overstats_data_dir()
+QUERY_TOOL_PATH = OVERSTATS_DATA_DIR / "query_tool.json"
+QUERY_TOOL_ASSET_DIR = ensure_dir(OVERSTATS_DATA_DIR / "query_tool_assets")
 QUERY_TOOL_ASSET_MANIFEST_PATH = QUERY_TOOL_ASSET_DIR / "assets_manifest.json"
 IMAGE_URL_KEYS = ("icon", "image", "avatar", "portrait", "background", "smallIconUrl", "ddHeroIcon")
 ASSET_SECTION_DIRS = {
@@ -71,7 +79,7 @@ def get_asset_download_workers() -> int:
     try:
         return max(1, int(raw_value))
     except ValueError:
-        print(
+        logger.debug(
             "[overstats] invalid OVERSTATS_QUERY_TOOL_ASSET_WORKERS="
             f"{raw_value!r}, fallback to {DEFAULT_ASSET_DOWNLOAD_WORKERS}"
         )
@@ -87,7 +95,7 @@ def read_query_tool(default: Dict[str, Any] | None = None) -> Dict[str, Any]:
         data = json.loads(QUERY_TOOL_PATH.read_text(encoding="utf-8"))
         return data if isinstance(data, dict) else default
     except Exception as exc:
-        print(f"[overstats] failed to read query tool config {QUERY_TOOL_PATH}: {exc}")
+        logger.debug(f"[overstats] failed to read query tool config {QUERY_TOOL_PATH}: {exc}")
     return default
 
 
@@ -136,7 +144,7 @@ def ensure_query_tool_assets(config: Dict[str, Any] | None = None) -> Dict[str, 
     failed = 0
     total = len(assets)
     if total:
-        print(f"[overstats] query_tool asset check started: total={total} workers={configured_workers}")
+        logger.debug(f"[overstats] query_tool asset check started: total={total} workers={configured_workers}")
         _print_asset_progress(0, total, cached, downloaded, failed, "start")
 
     pending = []
@@ -182,14 +190,12 @@ def ensure_query_tool_assets(config: Dict[str, Any] | None = None) -> Dict[str, 
                         "category": category,
                         "error": f"{type(exc).__name__}: {exc}",
                     }
-                    print()
-                    print(f"[overstats] failed to download query_tool asset {url}: {exc}")
+                    logger.debug(f"[overstats] failed to download query_tool asset {url}: {exc}")
                 _print_asset_progress(checked, total, cached, downloaded, failed, status)
 
     _write_asset_manifest(manifest)
     if total:
-        print()
-        print(
+        logger.debug(
             "[overstats] query_tool asset check finished: "
             f"checked={checked} cached={cached} downloaded={downloaded} failed={failed}"
         )
@@ -239,7 +245,7 @@ class QueryToolModule:
             try:
                 write_query_tool(merged_config)
             except Exception as exc:
-                print(f"[overstats] failed to write {QUERY_TOOL_PATH}: {exc}")
+                logger.debug(f"[overstats] failed to write {QUERY_TOOL_PATH}: {exc}")
 
             _CONFIG_CACHE = merged_config
             _CONFIG_UPDATED = True
@@ -365,10 +371,7 @@ def _print_asset_progress(
     filled = int(width * ratio)
     bar = "#" * filled + "-" * (width - filled)
     percent = ratio * 100
-    print(
-        "\r"
+    logger.debug(
         f"[overstats] assets [{bar}] {current}/{total} {percent:5.1f}% "
-        f"cached={cached} downloaded={downloaded} failed={failed} last={status}",
-        end="",
-        flush=True,
+        f"cached={cached} downloaded={downloaded} failed={failed} last={status}"
     )

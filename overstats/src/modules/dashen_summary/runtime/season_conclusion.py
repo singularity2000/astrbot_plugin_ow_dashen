@@ -3,6 +3,7 @@ import base64
 import datetime
 import hashlib
 import json
+import logging
 import os
 import random
 import re
@@ -15,6 +16,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
 
 from ....constants.backgrounds import build_random_map_background
+from .....paths import ensure_dir, get_overstats_data_dir
 
 from .dashen import (
     dashen_api_client,
@@ -32,6 +34,8 @@ from .perf_log import append_perf_log
 from .render_gate import get_global_render_limit, get_global_render_semaphore
 from .stat_reference import get_cached_statmap_summary as _shared_get_cached_statmap_summary
 
+logger = logging.getLogger("astrbot")
+
 
 def _read_env_int(name, default):
     raw_value = str(os.getenv(name, "") or "").strip()
@@ -46,10 +50,12 @@ def _read_env_int(name, default):
 MODULE_DIR = os.path.dirname(os.path.abspath(__file__))
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
 RESOURCE_DIR = PROJECT_ROOT / "res"
-QUERY_TOOL_ASSET_DIR = RESOURCE_DIR / "query_tool_assets"
-SUMMARY_EXTRA_ASSET_DIR = QUERY_TOOL_ASSET_DIR / "extra"
-CONFIG_PATH = os.path.join(PROJECT_ROOT, "res", "query_tool.json")
-RANK_DISTRIBUTION_CACHE_DIR = os.path.join(MODULE_DIR, "cache", "rank_distribution_daily")
+OVERSTATS_DATA_DIR = get_overstats_data_dir()
+QUERY_TOOL_ASSET_DIR = ensure_dir(OVERSTATS_DATA_DIR / "query_tool_assets")
+SUMMARY_EXTRA_ASSET_DIR = ensure_dir(QUERY_TOOL_ASSET_DIR / "extra")
+CONFIG_PATH = str(OVERSTATS_DATA_DIR / "query_tool.json")
+SUMMARY_RUNTIME_CACHE_DIR = ensure_dir(OVERSTATS_DATA_DIR / "dashen_summary_runtime_cache")
+RANK_DISTRIBUTION_CACHE_DIR = str(ensure_dir(SUMMARY_RUNTIME_CACHE_DIR / "rank_distribution_daily"))
 SEASON_SUMMARY_URL_LIMIT = 6
 SEASON_SUMMARY_RENDER_CONCURRENCY = get_global_render_limit()
 SEASON_SUMMARY_RENDER_LOG_WAIT_MS = 200
@@ -126,7 +132,7 @@ async def _run_summary_render_async(label, awaitable_factory):
     async with _get_summary_render_semaphore():
         wait_ms = int((loop.time() - queued_at) * 1000)
         if wait_ms >= SEASON_SUMMARY_RENDER_LOG_WAIT_MS:
-            print(
+            logger.debug(
                 f"[season-summary-render] step={label} wait_ms={wait_ms} "
                 f"limit={SEASON_SUMMARY_RENDER_CONCURRENCY}"
             )
@@ -139,7 +145,7 @@ async def _run_summary_render_sync(label, func, *args):
     async with _get_summary_render_semaphore():
         wait_ms = int((loop.time() - queued_at) * 1000)
         if wait_ms >= SEASON_SUMMARY_RENDER_LOG_WAIT_MS:
-            print(
+            logger.debug(
                 f"[season-summary-render] step={label} wait_ms={wait_ms} "
                 f"limit={SEASON_SUMMARY_RENDER_CONCURRENCY}"
             )

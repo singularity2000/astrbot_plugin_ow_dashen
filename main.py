@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import importlib
+import json
 import os
+import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 from astrbot.api import logger
@@ -12,9 +13,18 @@ from astrbot.api.star import Context, Star
 from astrbot.core.config.astrbot_config import AstrBotConfig
 
 _PLUGIN_DIR = Path(__file__).resolve().parent
+_PLUGIN_ROOT_STR = str(_PLUGIN_DIR)
+if _PLUGIN_ROOT_STR not in sys.path:
+    sys.path.insert(0, _PLUGIN_ROOT_STR)
+
+from overstats.paths import get_overstats_data_dir, get_plugin_data_dir
+
 _OVERSTATS_ROOT = _PLUGIN_DIR / "overstats"
 _RES_DIR = _OVERSTATS_ROOT / "res"
-_DATA_DIR = Path(os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "data", "plugin_data", "astrbot_plugin_ow_dashen"))
+_PLUGIN_DATA_DIR = get_plugin_data_dir()
+_OVERSTATS_DATA_DIR = get_overstats_data_dir()
+_BINDINGS_PATH = _PLUGIN_DATA_DIR / "bindings.json"
+_TEMP_IMAGE_DIR = _PLUGIN_DATA_DIR / "temp"
 
 _CN_MODE_MAP = {"快速": "quick", "竞技": "competitive"}
 _CN_RANK_MAP = {
@@ -62,10 +72,6 @@ class OwDashenPlugin(Star):
         return "插件已加载，但你还没有在插件配置里填写可用的网易大神账号。请先到 AstrBot 插件配置面板中，填写至少一个启用的 role_id 和 token，然后重载插件。"
 
     async def initialize(self) -> None:
-        plugin_root_str = str(_PLUGIN_DIR)
-        if plugin_root_str not in sys.path:
-            sys.path.insert(0, plugin_root_str)
-
         flat = _flatten_config(self.config)
         from overstats.config import config as overstats_config_module
         overstats_config_module.inject_config(flat)
@@ -148,31 +154,46 @@ class OwDashenPlugin(Star):
         if explicit_tag and explicit_tag.strip():
             return explicit_tag.strip()
         sender_id = str(event.get_sender_id() or "")
-        try:
-            stored = await self.get_kv_data(f"ow_bind:{sender_id}", "")
-            if stored and stored.strip():
-                return stored.strip()
-        except Exception:
-            pass
-        return None
+        return self._read_bindings().get(sender_id)
 
     async def _set_bind(self, sender_id: str, battletag: str) -> None:
-        await self.put_kv_data(f"ow_bind:{sender_id}", battletag)
+        bindings = self._read_bindings()
+        bindings[str(sender_id)] = str(battletag).strip()
+        self._write_bindings(bindings)
 
     async def _remove_bind(self, sender_id: str) -> None:
-        try:
-            await self.delete_kv_data(f"ow_bind:{sender_id}")
-        except Exception:
-            pass
+        bindings = self._read_bindings()
+        bindings.pop(str(sender_id), None)
+        self._write_bindings(bindings)
 
     async def _get_bind(self, sender_id: str) -> str | None:
+        return self._read_bindings().get(str(sender_id))
+
+    def _read_bindings(self) -> dict[str, str]:
+        if not _BINDINGS_PATH.exists():
+            return {}
         try:
-            stored = await self.get_kv_data(f"ow_bind:{sender_id}", "")
-            if stored and stored.strip():
-                return stored.strip()
-        except Exception:
-            pass
-        return None
+            payload = json.loads(_BINDINGS_PATH.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning(f"[ow_dashen] 读取 bindings.json 失败: {e}")
+            return {}
+        if not isinstance(payload, dict):
+            return {}
+        result: dict[str, str] = {}
+        for key, value in payload.items():
+            sender_id = str(key or "").strip()
+            battletag = str(value or "").strip()
+            if sender_id and battletag:
+                result[sender_id] = battletag
+        return result
+
+    def _write_bindings(self, bindings: dict[str, str]) -> None:
+        _PLUGIN_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        normalized = {str(k): str(v) for k, v in bindings.items() if str(k).strip() and str(v).strip()}
+        _BINDINGS_PATH.write_text(
+            json.dumps(normalized, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
 
     def _format_rank_history_fallback(self, seasons: list[dict]) -> list[str]:
         lines: list[str] = []
@@ -212,9 +233,8 @@ class OwDashenPlugin(Star):
                 yield event.plain_result(fallback_text)
             return
         try:
-            tmp_dir = Path(tempfile.gettempdir()) / "ow_dashen"
-            tmp_dir.mkdir(parents=True, exist_ok=True)
-            img_path = tmp_dir / f"{hash(rendered.content)}.png"
+            _TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+            img_path = _TEMP_IMAGE_DIR / f"{hash(rendered.content)}.png"
             img_path.write_bytes(rendered.content)
             yield event.image_result(str(img_path))
             if self.config.get("output", {}).get("cleanup_temp_files", True):
@@ -745,14 +765,21 @@ class OwDashenPlugin(Star):
     @filter.permission_type(filter.PermissionType.ADMIN)
     async def ow_cleanup(self, event: AstrMessageEvent):
         '''[管理员] 清理本地图片缓存'''
-        tmp_dir = Path(tempfile.gettempdir()) / "ow_dashen"
-        count = 0
+        removed: list[str] = []
+        cache_dirs = [
+            _OVERSTATS_DATA_DIR / "cache_img",
+            _OVERSTATS_DATA_DIR / "query_tool_assets" / "extra",
+            _OVERSTATS_DATA_DIR / "dashen_summary_runtime_cache",
+            _TEMP_IMAGE_DIR,
+        ]
         try:
-            if tmp_dir.exists():
-                for f in tmp_dir.iterdir():
-                    if f.is_file() and f.suffix in {".png", ".jpg"}:
-                        f.unlink(missing_ok=True)
-                        count += 1
-            yield event.plain_result(f"已清理 {count} 个临时文件")
+            for cache_dir in cache_dirs:
+                if cache_dir.exists():
+                    shutil.rmtree(cache_dir, ignore_errors=True)
+                    removed.append(str(cache_dir))
+            if removed:
+                yield event.plain_result("已清理以下缓存目录：\n" + "\n".join(f"- {path}" for path in removed))
+            else:
+                yield event.plain_result("没有检测到可清理的缓存目录")
         except Exception as e:
             yield event.plain_result(f"清理出错: {e}")

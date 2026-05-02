@@ -4,8 +4,11 @@ import asyncio
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 import datetime as dt
+import logging
 from typing import Callable, Dict, Optional
 from zoneinfo import ZoneInfo
+
+logger = logging.getLogger("astrbot")
 
 try:
     from overstats.src.db import (
@@ -149,7 +152,7 @@ class OWHeroLeaderboardSyncService:
         while True:
             try:
                 results = await self.sync_once()
-                print(
+                logger.debug(
                     "[overstats] ow hero leaderboard sync "
                     f"cn_status={results['cn'].status} "
                     f"cn_rows={results['cn'].rows_written} "
@@ -158,7 +161,7 @@ class OWHeroLeaderboardSyncService:
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                print(f"[overstats] ow hero leaderboard sync failed: {type(exc).__name__}: {exc}")
+                logger.debug(f"[overstats] ow hero leaderboard sync failed: {type(exc).__name__}: {exc}")
 
             delay_seconds = self.seconds_until_next_run(self.now_provider())
             await self.sleep_func(delay_seconds)
