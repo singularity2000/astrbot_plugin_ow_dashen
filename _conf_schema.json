@@ -1,0 +1,355 @@
+{
+    "permissions": {
+        "description": "使用权限",
+        "type": "object",
+        "hint": "控制谁能用这个插件、在哪些场景能用",
+        "items": {
+            "only_admin": {
+                "description": "仅管理员可用",
+                "type": "bool",
+                "hint": "只有 AstrBot 管理员才能使用所有命令。建议个人 QQ 开启，防止群友乱查",
+                "default": true
+            },
+            "allow_group": {
+                "description": "允许群聊使用",
+                "type": "bool",
+                "hint": "是否允许在 QQ 群里使用插件命令",
+                "default": true
+            },
+            "allow_private": {
+                "description": "允许私聊使用",
+                "type": "bool",
+                "hint": "是否允许在私聊里使用插件命令",
+                "default": true
+            },
+            "group_scope_mode": {
+                "description": "群聊范围模式",
+                "type": "string",
+                "hint": "控制哪些群可以使用插件。all = 所有群都能用；whitelist = 只有白名单里的群能用；blacklist = 除了黑名单里的群都能用",
+                "options": ["all", "whitelist", "blacklist"],
+                "default": "all"
+            },
+            "group_scope_list": {
+                "description": "群聊范围列表",
+                "type": "list",
+                "hint": "白名单或黑名单的内容。填写群的完整会话 ID（在群里发 /sid 可以获取），每行一个",
+                "default": [],
+                "items": {
+                    "type": "string"
+                }
+            }
+        }
+    },
+    "dashen_accounts": {
+        "description": "大神账号配置",
+        "hint": "配置网易大神账号凭据，至少需要一个账号才能使用插件。获取方法见仓库 README 或 Faststart.md",
+        "type": "template_list",
+        "templates": {
+            "account": {
+                "name": "大神账号",
+                "hint": "每个账号包含 role_id 和 token，获取方法：1. 登录大神官网 ds.163.com；2. 按 F12 在充值中心搜索 role_id；3. 在大神主页控制台运行 Faststart.md 里的脚本获取 token",
+                "items": {
+                    "name": {
+                        "description": "账号名称",
+                        "type": "string",
+                        "hint": "给这个账号起个名字方便区分，比如\"我的主号\"、\"备用号\"",
+                        "default": "primary"
+                    },
+                    "role_id": {
+                        "description": "大神角色 ID",
+                        "type": "int",
+                        "hint": "网易大神对你绑定的战网账号的唯一标识数字。获取方法：在大神充值中心页面按 F12 → Network → Ctrl+F5 → 搜索 &role_id → 复制数字值",
+                        "obvious_hint": true,
+                        "default": 0
+                    },
+                    "token": {
+                        "description": "大神业务令牌",
+                        "type": "string",
+                        "hint": "Overstats 用它向大神接口发起请求。获取方法：在大神主页按 F12 打开控制台，运行 Faststart.md 里的 JavaScript 脚本（把 YOUR_ROLE_ID 替换成你的 role_id），控制台会打印 result.token。注意：这是敏感信息，不要泄露！",
+                        "obvious_hint": true,
+                        "default": ""
+                    },
+                    "enabled": {
+                        "description": "启用此账号",
+                        "type": "bool",
+                        "hint": "可以临时关掉某个账号不让它参与请求轮转",
+                        "default": true
+                    }
+                }
+            }
+        }
+    },
+    "dashen_global": {
+        "description": "大神全局设置",
+        "type": "object",
+        "hint": "所有大神账号共享的全局参数",
+        "items": {
+            "dashen_dts": {
+                "description": "大神大数据年度标识",
+                "type": "int",
+                "hint": "大神接口用这个数字标记数据年份，一般不用改",
+                "default": 2026
+            },
+            "dashen_server": {
+                "description": "大神服务器编号",
+                "type": "int",
+                "hint": "大神接口用这个数字标记服务器，国服一般不用改",
+                "default": 1
+            },
+            "max_concurrent_requests": {
+                "description": "同时最多几个请求",
+                "type": "int",
+                "hint": "控制同时向大神接口发起的请求数量上限，避免请求太快被封。建议保持默认",
+                "default": 2
+            },
+            "account_failure_cooldown_seconds": {
+                "description": "账号失败冷却时间（秒）",
+                "type": "int",
+                "hint": "某个账号请求失败后，多久之后才再次尝试用它",
+                "default": 60
+            }
+        }
+    },
+    "analysis": {
+        "description": "AI 分析设置",
+        "type": "object",
+        "hint": "控制 AI 锐评和补丁翻译的行为。优先复用 AstrBot 已配置的模型提供商",
+        "items": {
+            "analysis_provider": {
+                "description": "AI 分析使用的模型提供商",
+                "type": "string",
+                "hint": "从 AstrBot 系统里已配置好的聊天模型提供商里选一个，AI 锐评和补丁翻译都会用这个",
+                "_special": "select_provider",
+                "default": ""
+            },
+            "persona_mode": {
+                "description": "AI 人格模式",
+                "type": "string",
+                "hint": "控制 AI 锐评时的说话风格来源。custom = 使用下方手填输入框里的提示词；persona = 从 AstrBot 的人设列表里选一个",
+                "options": ["custom", "persona"],
+                "default": "custom"
+            },
+            "custom_persona_prompt": {
+                "description": "自定义 AI 人格提示词",
+                "type": "text",
+                "hint": "当人格模式选 custom 时生效。控制 AI 锐评的说话风格，你可以改成任何风格，比如\"请用鲁迅的风格批评\"或\"请用鼓励的语气点评\"。留空使用默认的科比风格（man! what can i say, mamba out）",
+                "default": ""
+            },
+            "persona_id": {
+                "description": "从 AstrBot 人设列表选择",
+                "type": "string",
+                "hint": "当人格模式选 persona 时生效。从 AstrBot 系统里已定义的人设里选一个作为 AI 锐评的说话风格",
+                "_special": "select_persona",
+                "default": ""
+            },
+            "enable_ai_match_replies": {
+                "description": "开启 AI 战绩锐评",
+                "type": "bool",
+                "hint": "查对局详情时，是否让 AI 生成一段对这局表现的评语",
+                "default": true
+            },
+            "enable_patch_translation": {
+                "description": "开启补丁翻译",
+                "type": "bool",
+                "hint": "查外服补丁说明时，是否让 AI 自动把英文补丁内容翻译成中文",
+                "default": true
+            },
+            "llm_timeout_seconds": {
+                "description": "AI 调用超时时间（秒）",
+                "type": "int",
+                "hint": "如果 AI 响应太慢，超过这个时间就放弃 AI 部分，返回文本回退结果",
+                "default": 60
+            }
+        }
+    },
+    "output": {
+        "description": "输出设置",
+        "type": "object",
+        "hint": "控制插件发给 QQ 用户的结果是什么样子",
+        "items": {
+            "default_output_mode": {
+                "description": "默认输出形式",
+                "type": "string",
+                "hint": "插件返回结果时优先用什么形式。text = 只发文字；image = 只发图片；mixed = 同时发文字摘要和图片（推荐）",
+                "options": ["text", "image", "mixed"],
+                "default": "mixed"
+            },
+            "prefer_image_for_profile": {
+                "description": "查资料时优先发图片",
+                "type": "bool",
+                "hint": "查玩家资料时，是否优先发一张格式化的资料图而不是纯文字",
+                "default": true
+            },
+            "prefer_image_for_match": {
+                "description": "查战绩时优先发图片",
+                "type": "bool",
+                "hint": "查最近战绩时，是否优先发一张战绩列表图",
+                "default": true
+            },
+            "prefer_image_for_match_detail": {
+                "description": "查对局详情时优先发图片",
+                "type": "bool",
+                "hint": "查单场详情时，是否优先发战绩详情图",
+                "default": true
+            },
+            "prefer_image_for_summary": {
+                "description": "查总结时优先发图片",
+                "type": "bool",
+                "hint": "查今日/昨日/本周总结时，是否优先发总结图片",
+                "default": true
+            },
+            "prefer_image_for_rank_history": {
+                "description": "查段位历史时优先发图片",
+                "type": "bool",
+                "hint": "查段位变化时，是否优先发段位历史图",
+                "default": true
+            },
+            "prefer_image_for_strength": {
+                "description": "查强度分析时优先发图片",
+                "type": "bool",
+                "hint": "查快速强度或竞技强度时，是否优先发强度分析图",
+                "default": true
+            },
+            "prefer_image_for_pick_rate": {
+                "description": "查英雄选取率时优先发图片",
+                "type": "bool",
+                "hint": "查英雄热度榜单时，是否优先发榜单图",
+                "default": true
+            },
+            "prefer_image_for_shop": {
+                "description": "查商店时优先发图片",
+                "type": "bool",
+                "hint": "查守望先锋商店时，是否优先发商店卡片图",
+                "default": true
+            },
+            "prefer_image_for_patch_notes": {
+                "description": "查补丁说明时优先发图片",
+                "type": "bool",
+                "hint": "查补丁时，是否优先发补丁卡片图",
+                "default": true
+            },
+            "auto_fallback_to_text": {
+                "description": "图片失败时自动退回文字",
+                "type": "bool",
+                "hint": "如果图片生成失败或发送失败，是否自动改用文字摘要发给用户。建议开启，否则图片出问题时用户会完全没有反馈",
+                "default": true
+            },
+            "cache_days": {
+                "description": "图片缓存保留天数",
+                "type": "int",
+                "hint": "生成的图片在本地保留多少天。0 = 不缓存每次重新生成；3 = 保留3天方便下次快速返回",
+                "default": 3
+            },
+            "cleanup_temp_files": {
+                "description": "自动清理临时文件",
+                "type": "bool",
+                "hint": "是否在发送完成后自动删掉中间临时文件（图片、PDF 等），不占硬盘",
+                "default": true
+            }
+        }
+    },
+    "network": {
+        "description": "网络与代理",
+        "type": "object",
+        "hint": "如果你的网络环境无法直接访问网易大神或暴雪海外接口，可以在这里配置代理",
+        "items": {
+            "netease_proxy": {
+                "description": "网易大神接口代理",
+                "type": "string",
+                "hint": "如果你的网络无法直接访问网易大神接口，填一个 HTTP 代理地址比如 http://127.0.0.1:7890。留空则直连",
+                "default": ""
+            },
+            "patch_notes_use_international_proxy": {
+                "description": "外服补丁使用代理",
+                "type": "bool",
+                "hint": "查外服（暴雪海外）补丁说明时，是否通过代理访问。国内网络可能无法直接访问暴雪海外网站，需要开启",
+                "default": false
+            },
+            "patch_notes_international_proxy": {
+                "description": "外服补丁代理地址",
+                "type": "string",
+                "hint": "上面的代理开启后，在这里填代理地址",
+                "default": ""
+            },
+            "http_timeout_seconds": {
+                "description": "网络请求超时时间（秒）",
+                "type": "int",
+                "hint": "向大神接口或暴雪接口发请求时，等多久算超时",
+                "default": 60
+            }
+        }
+    },
+    "features": {
+        "description": "功能开关",
+        "type": "object",
+        "hint": "单独控制每个功能是否开放。有些群可能只想要商店和补丁，不想开放玩家查询",
+        "items": {
+            "enable_profile": {
+                "description": "开放玩家资料查询",
+                "type": "bool",
+                "hint": "是否允许查玩家资料",
+                "default": true
+            },
+            "enable_match": {
+                "description": "开放战绩查询",
+                "type": "bool",
+                "hint": "是否允许查最近战绩列表",
+                "default": true
+            },
+            "enable_match_detail": {
+                "description": "开放对局详情查询",
+                "type": "bool",
+                "hint": "是否允许查单场对局的详细数据",
+                "default": true
+            },
+            "enable_rank_history": {
+                "description": "开放段位历史查询",
+                "type": "bool",
+                "hint": "是否允许查段位变化曲线",
+                "default": true
+            },
+            "enable_quick_strength": {
+                "description": "开放快速强度分析",
+                "type": "bool",
+                "hint": "是否允许查快速模式的强度分析",
+                "default": true
+            },
+            "enable_competitive_strength": {
+                "description": "开放竞技强度分析",
+                "type": "bool",
+                "hint": "是否允许查竞技模式的强度分析",
+                "default": true
+            },
+            "enable_summary": {
+                "description": "开放每日总结",
+                "type": "bool",
+                "hint": "是否允许查今日/昨日/本周总结",
+                "default": true
+            },
+            "enable_pick_rate": {
+                "description": "开放英雄选取率查询",
+                "type": "bool",
+                "hint": "是否允许查英雄热度榜单和历史曲线",
+                "default": true
+            },
+            "enable_shop": {
+                "description": "开放商店查询",
+                "type": "bool",
+                "hint": "是否允许查守望先锋商店内容",
+                "default": true
+            },
+            "enable_patch_notes": {
+                "description": "开放补丁说明查询",
+                "type": "bool",
+                "hint": "是否允许查补丁说明",
+                "default": true
+            },
+            "enable_identity_search": {
+                "description": "开放玩家搜索",
+                "type": "bool",
+                "hint": "是否允许搜索玩家（当 BattleTag 不确定时用来找人）",
+                "default": true
+            }
+        }
+    }
+}
