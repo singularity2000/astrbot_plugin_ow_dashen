@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
@@ -38,7 +39,7 @@ class DashenSummaryModule:
 
     async def query_summary(self, query: DashenSummaryQuery) -> DashenSummaryOutput:
         query, resolved_bnet = await self._resolve_query(query)
-        worker_result = await self.requests.render_summary(query)
+        worker_result = await self._render_summary_with_retry(query)
         image_bytes, image_media_type = decode_summary_image_base64(worker_result.image_base64)
         payload = worker_result.payload
         full_id = str(payload.get("full_id") or query.full_id or query.bnet_id).strip()
@@ -59,6 +60,15 @@ class DashenSummaryModule:
             image_media_type=image_media_type,
             resolved_bnet=resolved_bnet,
         )
+
+    async def _render_summary_with_retry(self, query: DashenSummaryQuery):
+        try:
+            return await self.requests.render_summary(query)
+        except ModuleError as exc:
+            if exc.error != "summary_empty":
+                raise
+            await asyncio.sleep(0.50)
+            return await self.requests.render_summary(query)
 
     async def _resolve_query(self, query: DashenSummaryQuery) -> tuple[DashenSummaryQuery, Optional[BnetSearchResult]]:
         if query.customer_token:

@@ -144,12 +144,12 @@ class OwDashenPlugin(Star):
                 logger.warning(f"[ow_dashen] 关闭 API 客户端时出错: {e}")
         logger.info("[ow_dashen] 插件已终止")
 
-    def _resolve_battletag(self, event: AstrMessageEvent, explicit_tag: str | None = None) -> str | None:
+    async def _resolve_battletag(self, event: AstrMessageEvent, explicit_tag: str | None = None) -> str | None:
         if explicit_tag and explicit_tag.strip():
             return explicit_tag.strip()
         sender_id = str(event.get_sender_id() or "")
         try:
-            stored = self.context.get_kv_data(f"ow_bind:{sender_id}")
+            stored = await self.get_kv_data(f"ow_bind:{sender_id}", "")
             if stored and stored.strip():
                 return stored.strip()
         except Exception:
@@ -157,22 +157,51 @@ class OwDashenPlugin(Star):
         return None
 
     async def _set_bind(self, sender_id: str, battletag: str) -> None:
-        await self.context.put_kv_data(f"ow_bind:{sender_id}", battletag)
+        await self.put_kv_data(f"ow_bind:{sender_id}", battletag)
 
     async def _remove_bind(self, sender_id: str) -> None:
         try:
-            await self.context.delete_kv_data(f"ow_bind:{sender_id}")
+            await self.delete_kv_data(f"ow_bind:{sender_id}")
         except Exception:
             pass
 
     async def _get_bind(self, sender_id: str) -> str | None:
         try:
-            stored = self.context.get_kv_data(f"ow_bind:{sender_id}")
+            stored = await self.get_kv_data(f"ow_bind:{sender_id}", "")
             if stored and stored.strip():
                 return stored.strip()
         except Exception:
             pass
         return None
+
+    def _format_rank_history_fallback(self, seasons: list[dict]) -> list[str]:
+        lines: list[str] = []
+        for season_info in seasons:
+            season_num = season_info.get("season", "?")
+            competitive = season_info.get("competitive") or {}
+            roles = competitive.get("roles") or []
+            if not roles:
+                lines.append(f"  赛季 {season_num}: 无竞技段位数据")
+                continue
+
+            role_parts: list[str] = []
+            for role in roles:
+                role_type = str(role.get("role_type") or "").strip()
+                current = role.get("current") or {}
+                peak = role.get("peak") or {}
+                current_score = int(current.get("rank_score") or 0)
+                peak_score = int(peak.get("rank_score") or 0)
+                current_sub_tier = int(current.get("rank_sub_tier") or 0)
+                peak_sub_tier = int(peak.get("rank_sub_tier") or 0)
+                match_sum = int(role.get("match_sum") or 0)
+                win_rate = float(role.get("win_rate") or 0)
+                role_label = {"tank": "坦克", "dps": "输出", "healer": "辅助", "open": "开放"}.get(role_type, role_type or "未知")
+                role_parts.append(
+                    f"{role_label} 当前{current_score}/{current_sub_tier} 最高{peak_score}/{peak_sub_tier} 场次{match_sum} 胜率{win_rate:.1f}%"
+                )
+
+            lines.append(f"  赛季 {season_num}: " + "；".join(role_parts))
+        return lines
 
     def _no_bind_hint(self) -> str:
         return "你还没有绑定守望先锋账号。请先使用 /ow 绑定 <BattleTag> 绑定你的账号，例如 /ow 绑定 BattleTag#1234"
@@ -318,18 +347,17 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._profile is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
         try:
             from overstats.src.modules.dashen_profile.requests import DashenProfileQuery
             query = DashenProfileQuery(bnet_id=tag)
-            result = await self._profile.query_profile(query)
-            lines = [f"玩家：{result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
-            lines.append(f"customer_token: {result.customer_token}")
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_profile", True)
+            result = await self._profile.query_profile(query, render=prefer_img)
+            lines = [f"玩家：{result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
             if prefer_img and result.image:
                 async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
                     yield r
@@ -346,7 +374,7 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._match is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
@@ -354,15 +382,15 @@ class OwDashenPlugin(Star):
         try:
             from overstats.src.modules.dashen_match.requests import DashenMatchQuery
             query = DashenMatchQuery(bnet_id=tag, target_count=n)
-            result = await self._match.query_match_list(query)
+            output_cfg = self.config.get("output", {})
+            prefer_img = output_cfg.get("prefer_image_for_match", True)
+            result = await self._match.query_match_list(query, render=prefer_img)
             lines = [f"玩家：{result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
             lines.append(f"最近 {len(result.matches)} 场战绩：")
             for i, m in enumerate(result.matches):
                 result_str = "胜" if m.get("matchRet") == 1 else "败"
                 hero = m.get("heroGuid", "?")
                 lines.append(f"  {i+1}. {result_str} | 英雄: {hero}")
-            output_cfg = self.config.get("output", {})
-            prefer_img = output_cfg.get("prefer_image_for_match", True)
             if prefer_img and result.image:
                 async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
                     yield r
@@ -378,19 +406,19 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._match is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
         try:
             from overstats.src.modules.dashen_match.requests import DashenMatchQuery
             query = DashenMatchQuery(bnet_id=tag)
-            result = await self._match.query_match_detail_by_index(query, index - 1)
+            output_cfg = self.config.get("output", {})
+            prefer_img = output_cfg.get("prefer_image_for_match_detail", True)
+            result = await self._match.query_match_detail_by_index(query, index - 1, render=prefer_img)
             detail = result.detail
             lines = [f"对局详情 (第{index}场)"]
             lines.append(f"match_id: {detail.match_id}")
-            output_cfg = self.config.get("output", {})
-            prefer_img = output_cfg.get("prefer_image_for_match_detail", True)
             if prefer_img and result.image:
                 async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
                     yield r
@@ -406,21 +434,18 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._rank_history is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
         try:
             from overstats.src.modules.dashen_rank_history.requests import DashenRankHistoryQuery
             query = DashenRankHistoryQuery(bnet_id=tag)
-            result = await self._rank_history.query_rank_history(query)
-            lines = [f"段位历史: {result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
-            for s in result.seasons:
-                season_num = s.get("season", "?")
-                has_comp = s.get("has_competitive", False)
-                lines.append(f"  赛季 {season_num}: 竞技={has_comp}")
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_rank_history", True)
+            result = await self._rank_history.query_rank_history(query, render=prefer_img)
+            lines = [f"段位历史: {result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
+            lines.extend(self._format_rank_history_fallback(list(result.seasons)))
             if prefer_img and result.image:
                 async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
                     yield r
@@ -436,7 +461,7 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._quick_strength is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
@@ -444,12 +469,12 @@ class OwDashenPlugin(Star):
         try:
             from overstats.src.modules.dashen_quick_strength.requests import DashenQuickStrengthQuery
             query = DashenQuickStrengthQuery(bnet_id=tag, limit=n)
-            result = await self._quick_strength.query_quick_strength(query)
+            output_cfg = self.config.get("output", {})
+            prefer_img = output_cfg.get("prefer_image_for_strength", True)
+            result = await self._quick_strength.query_quick_strength(query, render=prefer_img)
             lines = [f"快速强度分析: {result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
             lines.append(f"平均分: {result.summary.overall_avg_score}")
             lines.append(f"段位: {result.summary.overall_avg_rank}")
-            output_cfg = self.config.get("output", {})
-            prefer_img = output_cfg.get("prefer_image_for_strength", True)
             if prefer_img and result.image:
                 async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
                     yield r
@@ -465,7 +490,7 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._competitive_strength is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
@@ -473,12 +498,12 @@ class OwDashenPlugin(Star):
         try:
             from overstats.src.modules.dashen_competitive_strength.requests import DashenCompetitiveStrengthQuery
             query = DashenCompetitiveStrengthQuery(bnet_id=tag, limit=n)
-            result = await self._competitive_strength.query_competitive_strength(query)
+            output_cfg = self.config.get("output", {})
+            prefer_img = output_cfg.get("prefer_image_for_strength", True)
+            result = await self._competitive_strength.query_competitive_strength(query, render=prefer_img)
             lines = [f"竞技强度分析: {result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
             lines.append(f"平均分: {result.summary.overall_avg_score}")
             lines.append(f"段位: {result.summary.overall_avg_rank}")
-            output_cfg = self.config.get("output", {})
-            prefer_img = output_cfg.get("prefer_image_for_strength", True)
             if prefer_img and result.image:
                 async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
                     yield r
@@ -494,7 +519,7 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._summary is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
@@ -523,7 +548,7 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._summary is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
@@ -552,7 +577,7 @@ class OwDashenPlugin(Star):
         if not self._account_features_ready() or self._summary is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        tag = self._resolve_battletag(event, battletag)
+        tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
