@@ -288,13 +288,9 @@ AstrBot 插件独立数据目录（data/plugin_data/astrbot_plugin_ow_dashen/）
 
 ## 常见问题
 
-### 1. 提示还没有绑定账号
+### 1. 插件占用大量磁盘空间，体积较大
 
-先执行：
-
-```text
-/ow 绑定 你的BattleTag
-```
+这是正常现象，因为要从网易大神接口下载很多素材图片。可以使用清理缓存命令清理。
 
 ### 2. 提示 BattleTag 格式不正确
 

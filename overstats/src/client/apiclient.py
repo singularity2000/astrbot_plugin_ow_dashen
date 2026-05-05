@@ -842,7 +842,7 @@ class DashenAPIClient:
         try:
             await recorder.enqueue(url, "upstream", success)
         except Exception as exc:
-            print(f"[overstats] failed to record upstream request metric url={url}: {exc}")
+            logger.debug(f"[overstats] failed to record upstream request metric url={url}: {exc}")
 
     async def _record_player_identity_payload(self, url: str, payload: Any) -> None:
         try:
@@ -854,7 +854,7 @@ class DashenAPIClient:
         try:
             await record_identity_payload(payload)
         except Exception as exc:
-            print(f"[overstats] failed to record player identity url={url}: {exc}")
+            logger.debug(f"[overstats] failed to record player identity url={url}: {exc}")
 
     async def request_json(
         self,

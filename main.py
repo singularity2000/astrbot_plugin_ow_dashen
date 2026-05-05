@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import importlib
 import json
 import os
@@ -150,9 +151,57 @@ class OwDashenPlugin(Star):
                 logger.warning(f"[ow_dashen] 关闭 API 客户端时出错: {e}")
         logger.info("[ow_dashen] 插件已终止")
 
-    async def _resolve_battletag(self, event: AstrMessageEvent, explicit_tag: str | None = None) -> str | None:
-        if explicit_tag and explicit_tag.strip():
-            return explicit_tag.strip()
+    def _normalize_optional_text(self, value: object) -> str | None:
+        if value is None:
+            return None
+        text = str(value).strip()
+        return text or None
+
+    def _coerce_int(self, value: object) -> int | None:
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, int):
+            return value
+        text = str(value).strip()
+        if text and text.lstrip("+-").isdigit():
+            return int(text)
+        return None
+
+    def _split_optional_battletag_and_number(self, battletag_or_number: object, number: object) -> tuple[str | None, int | None]:
+        explicit_number = self._coerce_int(number)
+        first_number = self._coerce_int(battletag_or_number)
+        if first_number is not None and explicit_number is None:
+            return None, first_number
+        return self._normalize_optional_text(battletag_or_number), explicit_number
+
+    def _sync_summary_runtime_client(self) -> None:
+        if self._api_client is None:
+            return
+        try:
+            from overstats.src.modules.dashen_summary import engine as summary_engine
+            summary_engine.dashen_api_client = self._api_client
+            runtime = getattr(summary_engine, "_RUNTIME", None)
+            if runtime is not None:
+                runtime.dashen.dashen_api_client = self._api_client
+        except Exception as e:
+            logger.debug(f"[ow_dashen] 同步总结运行时客户端失败: {e}")
+
+    async def _ensure_query_tool_assets_ready(self) -> None:
+        try:
+            from overstats.src.modules.query_tool.service import ensure_query_tool_assets, load_query_tool
+            config = load_query_tool(force_refresh=False)
+            if not config:
+                return
+            await asyncio.to_thread(ensure_query_tool_assets, config)
+        except Exception as e:
+            logger.warning(f"[ow_dashen] 预加载 query_tool 素材失败，部分图片元素可能缺失: {e}")
+
+    async def _resolve_battletag(self, event: AstrMessageEvent, explicit_tag: object = None) -> str | None:
+        tag = self._normalize_optional_text(explicit_tag)
+        if tag:
+            return tag
         sender_id = str(event.get_sender_id() or "")
         return self._read_bindings().get(sender_id)
 
@@ -261,37 +310,59 @@ class OwDashenPlugin(Star):
         '''查看守望先锋大神插件的全部命令和用法'''
         if not command_name:
             text = (
-                "OW 大神插件 — 命令一览\n"
-                "━━━━━━━━━━━━━━━━━━\n"
-                "账号管理：\n"
-                "  /ow 绑定 <BattleTag>   — 绑定你的守望先锋账号\n"
-                "  /ow 解绑               — 解绑账号\n"
-                "  /ow 我的绑定           — 查看当前绑定\n"
+                "OW 大神插件命令表\n"
+                "================\n"
+                "提示：已绑定用户可省略 [BattleTag]。\n"
+                "格式：<> 必填，[] 可选。\n"
                 "\n"
-                "数据查询（已绑定用户无需填 BattleTag）：\n"
-                "  /ow 资料 [BattleTag]   — 玩家资料与段位\n"
-                "  /ow 战绩 [BattleTag] [场数] — 最近战绩列表\n"
-                "  /ow 对局详情 [BattleTag] <序号> — 单场详细数据\n"
-                "  /ow 段位 [BattleTag]   — 段位历史变化\n"
-                "  /ow 快速强度 [BattleTag] [场数] — 快速模式强度\n"
-                "  /ow 竞技强度 [BattleTag] [场数] — 竞技模式强度\n"
-                "  /ow 今日总结 [BattleTag]  — 今日总结\n"
-                "  /ow 昨日总结 [BattleTag]  — 昨日总结\n"
-                "  /ow 本周总结 [BattleTag]  — 本周总结\n"
+                "【账号】\n"
+                "  /ow 绑定 <BattleTag>\n"
+                "    绑定守望先锋账号\n"
+                "  /ow 解绑\n"
+                "    解绑当前账号\n"
+                "  /ow 我的绑定\n"
+                "    查看当前绑定\n"
                 "\n"
-                "版本与商店：\n"
-                "  /ow 英雄热度 [模式] [段位] — 英雄选取率榜单\n"
-                "  /ow 英雄曲线 <英雄名> [模式] [段位] — 单英雄历史曲线\n"
-                "  /ow 商店               — 当前商店内容\n"
-                "  /ow 补丁 [类型]        — 补丁说明（最新/小更新/大更新）\n"
+                "【玩家数据】\n"
+                "  /ow 资料 [BattleTag]\n"
+                "    玩家资料、头像、段位概览\n"
+                "  /ow 战绩 [BattleTag] [场数]\n"
+                "    最近战绩列表；场数 1-20，默认 5\n"
+                "  /ow 对局详情 [BattleTag] <序号>\n"
+                "    单场详细数据；序号来自战绩列表\n"
+                "  /ow 段位 [BattleTag]\n"
+                "    多赛季段位历史\n"
+                "  /ow 快速强度 [BattleTag] [场数]\n"
+                "    快速模式强度分析；场数 3-12，默认 5\n"
+                "  /ow 竞技强度 [BattleTag] [场数]\n"
+                "    竞技模式强度分析；场数 3-12，默认 5\n"
                 "\n"
-                "搜索与管理：\n"
-                "  /ow 搜索玩家 <关键词> — 搜索不确定的 BattleTag\n"
-                "  /ow 自检               — [管理员] 检查配置与连通性\n"
-                "  /ow 清理缓存           — [管理员] 清理本地图片缓存\n"
+                "【总结】\n"
+                "  /ow 今日总结 [BattleTag]\n"
+                "  /ow 昨日总结 [BattleTag]\n"
+                "  /ow 本周总结 [BattleTag]\n"
+                "    生成对局总结图；本周总结可能较慢\n"
                 "\n"
-                "使用 owhelp <命令名> 查看对应命令的具体参数及用法\n"
-                "例如：owhelp 绑定、owhelp 战绩、owhelp 补丁"
+                "【英雄 / 商店 / 补丁】\n"
+                "  /ow 英雄热度 [模式] [段位]\n"
+                "    模式：快速/竞技；段位：全部到冠军\n"
+                "  /ow 英雄曲线 <英雄名> [模式] [段位]\n"
+                "    单英雄选取率历史曲线\n"
+                "  /ow 商店\n"
+                "    当前守望先锋商店\n"
+                "  /ow 补丁 [类型]\n"
+                "    类型：最新/小更新/大更新\n"
+                "\n"
+                "【搜索与维护】\n"
+                "  /ow 搜索玩家 <关键词>\n"
+                "    从本地缓存搜索 BattleTag 候选\n"
+                "  /ow 自检\n"
+                "    [管理员] 检查账号、客户端和素材缓存\n"
+                "  /ow 清理缓存\n"
+                "    [管理员] 清理图片和总结缓存\n"
+                "\n"
+                "查看单条命令帮助：owhelp <命令名>\n"
+                "例如：owhelp 战绩"
             )
             yield event.plain_result(text)
             return
@@ -301,9 +372,9 @@ class OwDashenPlugin(Star):
             "绑定": "绑定你的守望先锋账号，绑定后无需重复输入 BattleTag。\n用法：/ow 绑定 <BattleTag>\n示例：/ow 绑定 BattleTag#1234\n注意：BattleTag 格式为\"名字#数字\"。",
             "解绑": "解绑你的守望先锋账号。\n用法：/ow 解绑",
             "我的绑定": "查看你当前绑定的守望先锋账号 BattleTag。\n用法：/ow 我的绑定",
-            "资料": "查玩家资料，包括段位、胜率、游戏时长等。\n用法：/ow 资料 [BattleTag]\n示例：/ow 资料、/ow 资料 BattleTag#1234",
+            "资料": "查玩家资料。优先返回资料图；如果图片失败，会退回到简要文字结果。\n用法：/ow 资料 [BattleTag]\n示例：/ow 资料、/ow 资料 BattleTag#1234",
             "战绩": "查最近战绩列表，默认查 5 场。\n用法：/ow 战绩 [BattleTag] [场数]\n场数范围 1-20，默认 5。\n示例：/ow 战绩、/ow 战绩 10",
-            "对局详情": "查单场对局详细数据。\n用法：/ow 对局详情 [BattleTag] <序号>\n序号从最近战绩列表里按从新到旧排列（1=最近一场）。\n示例：/ow 对局详情 1",
+            "对局详情": "查单场对局详细数据。\n用法：/ow 对局详情 [BattleTag] <序号>\n序号从最近战绩列表里按从新到旧排列（1=最近一场）。\n当前主命令默认返回一张详情图。\n示例：/ow 对局详情 1",
             "段位": "查各赛季段位历史变化。\n用法：/ow 段位 [BattleTag]",
             "快速强度": "查快速模式强度分析。\n用法：/ow 快速强度 [BattleTag] [场数]\n场数范围 3-12，默认 5。",
             "竞技强度": "查竞技模式强度分析。\n用法：/ow 竞技强度 [BattleTag] [场数]\n场数范围 3-12，默认 5。",
@@ -314,9 +385,9 @@ class OwDashenPlugin(Star):
             "英雄曲线": "查单英雄选取率历史曲线。\n用法：/ow 英雄曲线 <英雄名> [模式] [段位]\n示例：/ow 英雄曲线 安娜 竞技 大师",
             "商店": "查当前守望先锋商店。\n用法：/ow 商店",
             "补丁": "查补丁说明。\n用法：/ow 补丁 [类型]\n类型：最新/小更新/大更新\n示例：/ow 补丁 大更新",
-            "搜索玩家": "搜索玩家。\n用法：/ow 搜索玩家 <关键词>\n示例：/ow 搜索玩家 Diana",
-            "自检": "[管理员] 检查配置与连通性。\n用法：/ow 自检",
-            "清理缓存": "[管理员] 清理本地图片缓存。\n用法：/ow 清理缓存",
+            "搜索玩家": "搜索玩家。\n用法：/ow 搜索玩家 <关键词>\n示例：/ow 搜索玩家 Nickname",
+            "自检": "[管理员] 检查账号配置、客户端状态和素材缓存。\n用法：/ow 自检",
+            "清理缓存": "[管理员] 清理本地图片缓存和总结运行时缓存。\n用法：/ow 清理缓存",
         }
         detail = help_map.get(cmd)
         if detail:
@@ -389,11 +460,12 @@ class OwDashenPlugin(Star):
             yield event.plain_result(f"查询失败：{e}")
 
     @ow.command("战绩")
-    async def ow_match(self, event: AstrMessageEvent, battletag: str | None = None, limit: int | None = None):
+    async def ow_match(self, event: AstrMessageEvent, battletag: str | int | None = None, limit: int | str | None = None):
         '''查最近战绩列表'''
         if not self._account_features_ready() or self._match is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
+        battletag, limit = self._split_optional_battletag_and_number(battletag, limit)
         tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
@@ -404,6 +476,8 @@ class OwDashenPlugin(Star):
             query = DashenMatchQuery(bnet_id=tag, target_count=n)
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_match", True)
+            if prefer_img:
+                await self._ensure_query_tool_assets_ready()
             result = await self._match.query_match_list(query, render=prefer_img)
             lines = [f"玩家：{result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
             lines.append(f"最近 {len(result.matches)} 场战绩：")
@@ -421,11 +495,13 @@ class OwDashenPlugin(Star):
             yield event.plain_result(f"查询失败：{e}")
 
     @ow.command("对局详情")
-    async def ow_match_detail(self, event: AstrMessageEvent, battletag: str | None = None, index: int = 1):
+    async def ow_match_detail(self, event: AstrMessageEvent, battletag: str | int | None = None, index: int | str = 1):
         '''查单场对局详细数据'''
         if not self._account_features_ready() or self._match is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
+        battletag, parsed_index = self._split_optional_battletag_and_number(battletag, index)
+        index = parsed_index or 1
         tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
@@ -435,6 +511,8 @@ class OwDashenPlugin(Star):
             query = DashenMatchQuery(bnet_id=tag)
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_match_detail", True)
+            if prefer_img:
+                await self._ensure_query_tool_assets_ready()
             result = await self._match.query_match_detail_by_index(query, index - 1, render=prefer_img)
             detail = result.detail
             lines = [f"对局详情 (第{index}场)"]
@@ -476,11 +554,12 @@ class OwDashenPlugin(Star):
             yield event.plain_result(f"查询失败：{e}")
 
     @ow.command("快速强度")
-    async def ow_quick_strength(self, event: AstrMessageEvent, battletag: str | None = None, limit: int | None = None):
+    async def ow_quick_strength(self, event: AstrMessageEvent, battletag: str | int | None = None, limit: int | str | None = None):
         '''查快速模式强度分析'''
         if not self._account_features_ready() or self._quick_strength is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
+        battletag, limit = self._split_optional_battletag_and_number(battletag, limit)
         tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
@@ -505,11 +584,12 @@ class OwDashenPlugin(Star):
             yield event.plain_result(f"查询失败：{e}")
 
     @ow.command("竞技强度")
-    async def ow_competitive_strength(self, event: AstrMessageEvent, battletag: str | None = None, limit: int | None = None):
+    async def ow_competitive_strength(self, event: AstrMessageEvent, battletag: str | int | None = None, limit: int | str | None = None):
         '''查竞技模式强度分析'''
         if not self._account_features_ready() or self._competitive_strength is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
+        battletag, limit = self._split_optional_battletag_and_number(battletag, limit)
         tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
@@ -544,6 +624,7 @@ class OwDashenPlugin(Star):
             yield event.plain_result(self._no_bind_hint())
             return
         try:
+            self._sync_summary_runtime_client()
             from overstats.src.modules.dashen_summary.requests import DashenSummaryQuery
             query = DashenSummaryQuery(bnet_id=tag, scope="today")
             result = await self._summary.query_summary(query)
@@ -573,6 +654,7 @@ class OwDashenPlugin(Star):
             yield event.plain_result(self._no_bind_hint())
             return
         try:
+            self._sync_summary_runtime_client()
             from overstats.src.modules.dashen_summary.requests import DashenSummaryQuery
             query = DashenSummaryQuery(bnet_id=tag, scope="yesterday")
             result = await self._summary.query_summary(query)
@@ -602,6 +684,7 @@ class OwDashenPlugin(Star):
             yield event.plain_result(self._no_bind_hint())
             return
         try:
+            self._sync_summary_runtime_client()
             from overstats.src.modules.dashen_summary.requests import DashenSummaryQuery
             query = DashenSummaryQuery(bnet_id=tag, scope="week")
             result = await self._summary.query_summary(query)
@@ -629,6 +712,8 @@ class OwDashenPlugin(Star):
             from overstats.src.modules.ow_hero_pick_rate.service import OWHeroPickRateQuery
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_pick_rate", True)
+            if prefer_img:
+                await self._ensure_query_tool_assets_ready()
             query = OWHeroPickRateQuery(view="ranking", game_mode=mode, mmr=rank)
             result = await self._pick_rate.query_pick_rate(query, render=prefer_img)
             lines = [f"英雄热度榜单 ({mode} {rank})"]
@@ -655,6 +740,8 @@ class OwDashenPlugin(Star):
             from overstats.src.modules.ow_hero_pick_rate.service import OWHeroPickRateQuery
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_pick_rate", True)
+            if prefer_img:
+                await self._ensure_query_tool_assets_ready()
             query = OWHeroPickRateQuery(view="history", game_mode=mode, mmr=rank, hero=hero.strip())
             result = await self._pick_rate.query_pick_rate(query, render=prefer_img)
             lines = [f"英雄选取率曲线: {hero} ({mode} {rank})"]
@@ -757,6 +844,26 @@ class OwDashenPlugin(Star):
                 lines.append(f"当前轮转账号: {cred.name}")
             else:
                 lines.append("API 客户端未初始化或无有效账号（首次安装未配置账号属于正常现象）")
+
+            try:
+                from overstats.src.modules.query_tool.service import read_query_tool, ensure_query_tool_assets
+                query_tool_config = read_query_tool(default={})
+                if query_tool_config:
+                    asset_result = await asyncio.to_thread(ensure_query_tool_assets, query_tool_config)
+                    checked = int(asset_result.get("checked") or 0)
+                    cached = int(asset_result.get("cached") or 0)
+                    downloaded = int(asset_result.get("downloaded") or 0)
+                    failed = int(asset_result.get("failed") or 0)
+                    lines.append(
+                        "素材缓存: "
+                        f"已检查 {checked} 个，已缓存 {cached} 个，新下载 {downloaded} 个，失败 {failed} 个"
+                    )
+                    if failed:
+                        lines.append("素材提示: 有资源下载失败，图片里可能缺英雄头像或地图图。可稍后重试 /ow 自检 或检查网络。")
+                else:
+                    lines.append("素材缓存: 尚未生成 query_tool.json，首次查询或重载插件后会自动拉取。")
+            except Exception as e:
+                lines.append(f"素材缓存检查出错: {e}")
         except Exception as e:
             lines.append(f"检查过程出错: {e}")
         yield event.plain_result("\n".join(lines))

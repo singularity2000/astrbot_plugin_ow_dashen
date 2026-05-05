@@ -277,10 +277,10 @@ class DashenMatchModule:
         if index < 0 or index >= len(matches):
             raise ModuleError(
                 error="match_index_out_of_range",
-                message=f"Match index out of range: {index}",
+                message=f"Match index out of range: {index + 1}",
                 status_code=400,
-                hint=f"Use an index from 0 to {max(len(matches) - 1, 0)}.",
-                details={"index": index, "match_count": len(matches)},
+                hint=f"Use an index from 1 to {max(len(matches), 1)}.",
+                details={"index": index + 1, "match_count": len(matches)},
             )
         detail = await self.requests.get_match_detail(query.customer_token, matches[index])
         image = (
@@ -344,10 +344,10 @@ class DashenMatchModule:
             if index < 0 or index >= len(matches):
                 raise ModuleError(
                     error="match_index_out_of_range",
-                    message=f"Match index out of range: {index}",
+                    message=f"Match index out of range: {index + 1}",
                     status_code=400,
-                    hint=f"Use an index from 0 to {max(len(matches) - 1, 0)}.",
-                    details={"index": index, "match_count": len(matches)},
+                    hint=f"Use an index from 1 to {max(len(matches), 1)}.",
+                    details={"index": index + 1, "match_count": len(matches)},
                 )
             source_match = dict(matches[index])
             detail = await self.requests.get_match_detail(customer_token, source_match)

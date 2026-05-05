@@ -37,6 +37,7 @@ ASSET_SECTION_DIRS = {
     "modTrait": "perk",
 }
 DEFAULT_ASSET_DOWNLOAD_WORKERS = 12
+ASSET_PROGRESS_LOG_ENABLED = os.getenv("OVERSTATS_QUERY_TOOL_ASSET_PROGRESS", "0").strip().lower() not in {"0", "false", "no", "off"}
 
 _CONFIG_LOCK = threading.Lock()
 _CONFIG_UPDATED = False
@@ -199,6 +200,12 @@ def ensure_query_tool_assets(config: Dict[str, Any] | None = None) -> Dict[str, 
             "[overstats] query_tool asset check finished: "
             f"checked={checked} cached={cached} downloaded={downloaded} failed={failed}"
         )
+        if failed:
+            logger.warning(
+                "[ow_dashen] 素材缓存检查完成，但有资源下载失败："
+                f"总数={total}，已缓存={cached}，新下载={downloaded}，失败={failed}。"
+                "部分图片可能缺少英雄头像或地图图。"
+            )
     return {
         "checked": checked,
         "cached": cached,
@@ -365,6 +372,8 @@ def _print_asset_progress(
     status: str,
 ) -> None:
     if total <= 0:
+        return
+    if not ASSET_PROGRESS_LOG_ENABLED:
         return
     width = 28
     ratio = min(max(current / total, 0), 1)
