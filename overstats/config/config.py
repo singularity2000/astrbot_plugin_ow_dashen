@@ -6,6 +6,26 @@ _INJECTED_CONFIG: dict | None = None
 def inject_config(cfg: dict) -> None:
     global _INJECTED_CONFIG
     _INJECTED_CONFIG = cfg
+    
+    global ANALYSIS_PERSONA_PROMPT, ENABLE_AI_MATCH_REPLIES, ENABLE_PATCH_TRANSLATION
+    global ANALYSIS_BASE_URL, ANALYSIS_API_KEY
+    analysis = cfg.get("analysis", {})
+    persona_mode = analysis.get("persona_mode", "custom")
+    if persona_mode == "custom":
+        ANALYSIS_PERSONA_PROMPT = str(analysis.get("custom_persona_prompt", "")).strip()
+    else:
+        ANALYSIS_PERSONA_PROMPT = ""
+        
+    ENABLE_AI_MATCH_REPLIES = bool(analysis.get("enable_ai_match_replies", True))
+    ENABLE_PATCH_TRANSLATION = bool(analysis.get("enable_patch_translation", True))
+    
+    provider_id = analysis.get("analysis_provider", "")
+    if provider_id:
+        ANALYSIS_BASE_URL = "http://dummy-url"
+        ANALYSIS_API_KEY = "dummy-key"
+    else:
+        ANALYSIS_BASE_URL = ""
+        ANALYSIS_API_KEY = ""
 
 
 def _get(key: str, default: object = None) -> object:

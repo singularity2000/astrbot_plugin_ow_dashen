@@ -125,15 +125,15 @@
             "persona_mode": {
                 "description": "AI 人格模式",
                 "type": "string",
-                "hint": "控制 AI 锐评时的说话风格来源。custom = 使用下方手填输入框里的提示词；persona = 从 AstrBot 的人设列表里选一个",
-                "options": ["custom", "persona"],
+                "hint": "控制 AI 锐评时的说话风格来源。custom = 使用自定义 AI 人格提示词；persona = 从人设列表选择一个；session = 智能跟随当前会话（群聊/私聊）正在应用的人格。",
+                "options": ["custom", "persona", "session"],
                 "default": "custom"
             },
             "custom_persona_prompt": {
                 "description": "自定义 AI 人格提示词",
                 "type": "text",
-                "hint": "当人格模式选 custom 时生效。控制 AI 锐评的说话风格，你可以改成任何风格，比如\"请用鲁迅的风格批评\"或\"请用鼓励的语气点评\"。留空使用默认的科比风格（man! what can i say, mamba out）",
-                "default": ""
+                "hint": "当人格模式选 custom 时生效。控制 AI 锐评的说话风格，你可以改成任何风格，比如\"请用鲁迅的风格批评\"或\"请用鼓励的语气点评\"。留空使用默认冷静电竞分析师人设。",
+                "default": "请扮演科比·布莱恩特，用他偏执而热血的“黑曼巴精神”和标志性口吻点评这局守望对局。如果打得好，给予热血的曼巴赞赏（what can I say）；如果表现极差，请毫不留情、最犀利地用毒舌吐槽鞭策他（Soft! 滚去训练馆，man!）。用简体中文输出。"
             },
             "persona_id": {
                 "description": "从 AstrBot 人设列表选择",

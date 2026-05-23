@@ -76,6 +76,14 @@ class OwDashenPlugin(Star):
         flat = _flatten_config(self.config)
         from overstats.config import config as overstats_config_module
         overstats_config_module.inject_config(flat)
+        
+        # 幽灵模块强行同步：遍历所有已载入的 config 模块并强制注入大模型占位符
+        import sys
+        for name, mod in list(sys.modules.items()):
+            if "config" in name and hasattr(mod, "inject_config"):
+                mod.ANALYSIS_BASE_URL = "http://dummy-url"
+                mod.ANALYSIS_API_KEY = "dummy-key"
+                logger.info(f"[ow_dashen] 成功对幽灵模块 {name} 强注大模型占位符")
 
         from overstats.src.modules.ow_hero_leaderboard.service import OWHeroLeaderboardSyncService
         self._hero_leaderboard_sync = OWHeroLeaderboardSyncService()
@@ -134,6 +142,101 @@ class OwDashenPlugin(Star):
             self._quick_strength = None
             self._competitive_strength = None
             self._summary = None
+
+        # 劫持 Overstats 内部的大模型调用以复用 AstrBot 官方 LLM 提供商
+        try:
+            from overstats.src.modules.dashen_match.service import DashenMatchModule
+            from overstats.src.modules.patch_notes.requests import PatchNotesRequests
+            
+            original_call_openai = DashenMatchModule._call_openai_compatible
+            original_translate_batch = PatchNotesRequests._translate_text_batch
+            plugin_self = self
+            
+            async def hooked_call_openai_compatible(service_self, url, api_key, payload):
+                provider_id = plugin_self.config.get("analysis", {}).get("analysis_provider", "")
+                if not provider_id:
+                    return await original_call_openai(service_self, url, api_key, payload)
+                
+                prompt_content = payload["messages"][0]["content"]
+                system_prompt = None
+                persona_mode = plugin_self.config.get("analysis", {}).get("persona_mode", "custom")
+                
+                if persona_mode == "session":
+                    current_event = getattr(plugin_self, "_current_event", None)
+                    if current_event:
+                        try:
+                            session = current_event.session
+                            if session and session.persona_id:
+                                persona = await plugin_self.context.persona_manager.get_persona(session.persona_id)
+                                if persona and getattr(persona, "system_prompt", None):
+                                    system_prompt = persona.system_prompt
+                        except Exception as pe:
+                            logger.warning(f"[ow_dashen] 动态拉取当前会话人设失败: {pe}")
+                elif persona_mode == "persona":
+                    persona_id = plugin_self.config.get("analysis", {}).get("persona_id", "")
+                    if persona_id:
+                        try:
+                            persona = await plugin_self.context.persona_manager.get_persona(persona_id)
+                            if persona and getattr(persona, "system_prompt", None):
+                                system_prompt = persona.system_prompt
+                        except Exception as pe:
+                            logger.warning(f"[ow_dashen] 获取人设列表模板失败: {pe}")
+                elif persona_mode == "custom":
+                    system_prompt = None
+                
+                try:
+                    llm_response = await plugin_self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=prompt_content,
+                        system_prompt=system_prompt,
+                    )
+                    return {
+                        "choices": [
+                            {
+                                "message": {
+                                    "content": llm_response.completion_text
+                                }
+                            }
+                        ]
+                    }
+                except Exception as le:
+                    logger.error(f"[ow_dashen] 劫持 LLM 锐评失败: {le}")
+                    raise le
+                    
+            async def hooked_translate_text_batch(requests_self, texts, glossary, *, base_url, api_key):
+                enable_translation = plugin_self.config.get("analysis", {}).get("enable_patch_translation", True)
+                provider_id = plugin_self.config.get("analysis", {}).get("analysis_provider", "")
+                
+                if not enable_translation or not provider_id:
+                    return list(texts)
+                    
+                from overstats.src.modules.patch_notes.requests import _build_patch_translation_prompt
+                prompt_content = _build_patch_translation_prompt(texts, glossary)
+                
+                try:
+                    llm_response = await plugin_self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=prompt_content,
+                    )
+                    from overstats.src.modules.patch_notes.requests import _extract_json_array_text
+                    raw_text = llm_response.completion_text
+                    translations = json.loads(_extract_json_array_text(raw_text))
+                    
+                    if not isinstance(translations, list):
+                        raise ValueError("Translation response is not a JSON array")
+                    if len(translations) != len(texts):
+                        raise ValueError(f"Translation count mismatch: expected {len(texts)}, got {len(translations)}")
+                        
+                    return [str(item or "").strip() for item in translations]
+                except Exception as le:
+                    logger.error(f"[ow_dashen] 补丁翻译 LLM 调用失败，退回原文: {le}")
+                    return list(texts)
+                    
+            DashenMatchModule._call_openai_compatible = hooked_call_openai_compatible
+            PatchNotesRequests._translate_text_batch = hooked_translate_text_batch
+            logger.info("[ow_dashen] 已成功挂载 AstrBot 官方大模型代理劫持器")
+        except Exception as patch_e:
+            logger.error(f"[ow_dashen] 劫持大模型接口失败: {patch_e}")
 
         logger.info("[ow_dashen] 插件初始化完成，所有模块已加载")
 
@@ -279,13 +382,20 @@ class OwDashenPlugin(Star):
     async def _save_and_send_image(self, event: AstrMessageEvent, rendered, fallback_text: str = "") -> None:
         if rendered is None:
             if fallback_text:
-                yield event.plain_result(fallback_text)
+                from astrbot.core.message.message_event_result import MessageChain
+                await event.send(MessageChain().message(fallback_text))
             return
         try:
             _TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
             img_path = _TEMP_IMAGE_DIR / f"{hash(rendered.content)}.png"
             img_path.write_bytes(rendered.content)
-            yield event.image_result(str(img_path))
+            
+            from astrbot.core.message.components import Image
+            from astrbot.core.message.message_event_result import MessageChain
+            
+            chain = MessageChain(chain=[Image.fromFileSystem(str(img_path))])
+            await event.send(chain)
+            
             if self.config.get("output", {}).get("cleanup_temp_files", True):
                 try:
                     img_path.unlink(missing_ok=True)
@@ -294,7 +404,8 @@ class OwDashenPlugin(Star):
         except Exception as e:
             logger.warning(f"[ow_dashen] 图片发送失败: {e}")
             if fallback_text:
-                yield event.plain_result(fallback_text)
+                from astrbot.core.message.message_event_result import MessageChain
+                await event.send(MessageChain().message(fallback_text))
 
     def _cn_mode_to_en(self, mode: str) -> str:
         return _CN_MODE_MAP.get(mode.strip(), mode.strip().lower())
@@ -329,7 +440,9 @@ class OwDashenPlugin(Star):
                 "  /ow 战绩 [BattleTag] [场数]\n"
                 "    最近战绩列表；场数 1-20，默认 5\n"
                 "  /ow 对局详情 [BattleTag] <序号>\n"
-                "    单场详细数据；序号来自战绩列表\n"
+                "    返回单场详细数据 (序号来自战绩列表)\n"
+                "  /ow 锐评 [BattleTag] <序号>\n"
+                "    返回单场详细数据+全员数据图 (+AI战绩锐评图)\n"
                 "  /ow 段位 [BattleTag]\n"
                 "    多赛季段位历史\n"
                 "  /ow 快速强度 [BattleTag] [场数]\n"
@@ -374,7 +487,8 @@ class OwDashenPlugin(Star):
             "我的绑定": "查看你当前绑定的守望先锋账号 BattleTag。\n用法：/ow 我的绑定",
             "资料": "查玩家资料。优先返回资料图；如果图片失败，会退回到简要文字结果。\n用法：/ow 资料 [BattleTag]\n示例：/ow 资料、/ow 资料 BattleTag#1234",
             "战绩": "查最近战绩列表，默认查 5 场。\n用法：/ow 战绩 [BattleTag] [场数]\n场数范围 1-20，默认 5。\n示例：/ow 战绩、/ow 战绩 10",
-            "对局详情": "查单场对局详细数据。\n用法：/ow 对局详情 [BattleTag] <序号>\n序号从最近战绩列表里按从新到旧排列（1=最近一场）。\n当前主命令默认返回一张详情图。\n示例：/ow 对局详情 1",
+            "对局详情": "返回单场对局的单人详细数据（序号来自战绩列表，1=最近一场）。\n用法：/ow 对局详情 [BattleTag] <序号>\n示例：/ow 对局详情 1",
+            "锐评": "返回单场对局的详细数据+全员数据图（若后台配置且开启了 AI 锐评，则追加发送 AI 战绩锐评图）。\n用法：/ow 锐评 [BattleTag] <序号>\n示例：/ow 锐评 1",
             "段位": "查各赛季段位历史变化。\n用法：/ow 段位 [BattleTag]",
             "快速强度": "查快速模式强度分析。\n用法：/ow 快速强度 [BattleTag] [场数]\n场数范围 3-12，默认 5。",
             "竞技强度": "查竞技模式强度分析。\n用法：/ow 竞技强度 [BattleTag] [场数]\n场数范围 3-12，默认 5。",
@@ -442,6 +556,7 @@ class OwDashenPlugin(Star):
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
+        yield event.plain_result("⏳正在查询，请稍候…")
         try:
             from overstats.src.modules.dashen_profile.requests import DashenProfileQuery
             query = DashenProfileQuery(bnet_id=tag)
@@ -471,6 +586,7 @@ class OwDashenPlugin(Star):
             yield event.plain_result(self._no_bind_hint())
             return
         n = limit if limit and 1 <= limit <= 20 else 5
+        yield event.plain_result("⏳正在查询，请稍候…")
         try:
             from overstats.src.modules.dashen_match.requests import DashenMatchQuery
             query = DashenMatchQuery(bnet_id=tag, target_count=n)
@@ -495,35 +611,113 @@ class OwDashenPlugin(Star):
             yield event.plain_result(f"查询失败：{e}")
 
     @ow.command("对局详情")
-    async def ow_match_detail(self, event: AstrMessageEvent, battletag: str | int | None = None, index: int | str = 1):
-        '''查单场对局详细数据'''
+    async def ow_match_detail(self, event: AstrMessageEvent, battletag_or_number: str | None = None, number: str | None = None):
+        '''查单场对局详细数据（仅主图）'''
         if not self._account_features_ready() or self._match is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
-        battletag, parsed_index = self._split_optional_battletag_and_number(battletag, index)
-        index = parsed_index or 1
+            
+        yield event.plain_result("⏳正在查询，请稍候…")
+        
+        # 缓存当前处理 of event 以便劫持器(hook)在需要 session 人格时，能够拿到当前会话 context
+        self._current_event = event
+        
+        battletag, limit = self._split_optional_battletag_and_number(battletag_or_number, number)
         tag = await self._resolve_battletag(event, battletag)
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
+        index_val = limit if limit and limit >= 1 else 1
+            
         try:
             from overstats.src.modules.dashen_match.requests import DashenMatchQuery
             query = DashenMatchQuery(bnet_id=tag)
+            
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_match_detail", True)
             if prefer_img:
                 await self._ensure_query_tool_assets_ready()
-            result = await self._match.query_match_detail_by_index(query, index - 1, render=prefer_img)
+                
+            # 默认只发单人主战绩详情图，最速最省流
+            result = await self._match.query_match_detail_by_index(query, index_val - 1, render=prefer_img)
             detail = result.detail
-            lines = [f"对局详情 (第{index}场)"]
+            lines = [f"对局详情 (第{index_val}场)"]
             lines.append(f"match_id: {detail.match_id}")
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
+                            
         except Exception as e:
             logger.error(f"[ow_dashen] 对局详情查询失败: {e}")
+            yield event.plain_result(f"查询失败：{e}")
+
+    @ow.command("锐评")
+    async def ow_analyze(self, event: AstrMessageEvent, battletag_or_number: str | None = None, number: str | None = None):
+        '''返回单场详细数据+全员数据图（若后台配置且开启了 AI 锐评，则追加发送 AI 战绩锐评图）'''
+        if not self._account_features_ready() or self._match is None:
+            yield event.plain_result(self._account_not_configured_hint())
+            return
+            
+        yield event.plain_result("⏳正在查询，请稍候…")
+        
+        # 缓存当前处理的 event 以便劫持器(hook)在需要 session 人格时，能够拿到当前会话 context
+        self._current_event = event
+        
+        battletag, limit = self._split_optional_battletag_and_number(battletag_or_number, number)
+        tag = await self._resolve_battletag(event, battletag)
+        if not tag:
+            yield event.plain_result(self._no_bind_hint())
+            return
+        index_val = limit if limit and limit >= 1 else 1
+            
+        try:
+            from overstats.src.modules.dashen_match.requests import DashenMatchQuery
+            query = DashenMatchQuery(bnet_id=tag)
+            
+            output_cfg = self.config.get("output", {})
+            prefer_img = output_cfg.get("prefer_image_for_match_detail", True)
+            if prefer_img:
+                await self._ensure_query_tool_assets_ready()
+                
+            # 校验 AI 战绩锐评开关，并启用全员/分析
+            enable_ai = self.config.get("analysis", {}).get("enable_ai_match_replies", True)
+            provider_id = self.config.get("analysis", {}).get("analysis_provider", "")
+            need_analyze = bool(enable_ai and provider_id)
+            
+            result = await self._match.query_match_detail_replies(
+                query=query,
+                index=index_val - 1,
+                show_all_heroes=True,
+                analyze=need_analyze
+            )
+            
+            img_idx = 0
+            for reply in result.replies:
+                if reply["type"] == "image":
+                    from overstats.src.modules.dashen_match.render import RenderedImage
+                    import base64
+                    
+                    img_obj = RenderedImage(
+                        content=base64.b64decode(reply["base64"]),
+                        media_type=reply.get("media_type", "image/png")
+                    )
+                    
+                    # img_idx == 0: 单人详情主图
+                    # img_idx == 1: 全员详细对位瀑布流图
+                    # img_idx == 2: AI 战绩锐评图
+                    if img_idx == 0:
+                        await self._save_and_send_image(event, img_obj, f"对局详情 (第{index_val}场)")
+                    elif img_idx == 1:
+                        await self._save_and_send_image(event, img_obj, "全员详细对位数据")
+                    elif img_idx == 2 and need_analyze:
+                        await self._save_and_send_image(event, img_obj, "AI战绩锐评报告")
+                    img_idx += 1
+                elif reply["type"] == "text" and need_analyze:
+                    yield event.plain_result(reply.get("data", ""))
+                            
+        except Exception as e:
+            logger.error(f"[ow_dashen] 战绩锐评查询失败: {e}")
             yield event.plain_result(f"查询失败：{e}")
 
     @ow.command("段位")
@@ -545,8 +739,7 @@ class OwDashenPlugin(Star):
             lines = [f"段位历史: {result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
             lines.extend(self._format_rank_history_fallback(list(result.seasons)))
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -565,6 +758,7 @@ class OwDashenPlugin(Star):
             yield event.plain_result(self._no_bind_hint())
             return
         n = limit if limit and 3 <= limit <= 12 else 5
+        yield event.plain_result("⏳正在查询，请稍候…")
         try:
             from overstats.src.modules.dashen_quick_strength.requests import DashenQuickStrengthQuery
             query = DashenQuickStrengthQuery(bnet_id=tag, limit=n)
@@ -575,8 +769,7 @@ class OwDashenPlugin(Star):
             lines.append(f"平均分: {result.summary.overall_avg_score}")
             lines.append(f"段位: {result.summary.overall_avg_rank}")
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -595,6 +788,7 @@ class OwDashenPlugin(Star):
             yield event.plain_result(self._no_bind_hint())
             return
         n = limit if limit and 3 <= limit <= 12 else 5
+        yield event.plain_result("⏳正在查询，请稍候…")
         try:
             from overstats.src.modules.dashen_competitive_strength.requests import DashenCompetitiveStrengthQuery
             query = DashenCompetitiveStrengthQuery(bnet_id=tag, limit=n)
@@ -605,8 +799,7 @@ class OwDashenPlugin(Star):
             lines.append(f"平均分: {result.summary.overall_avg_score}")
             lines.append(f"段位: {result.summary.overall_avg_rank}")
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -623,6 +816,7 @@ class OwDashenPlugin(Star):
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
+        yield event.plain_result("⏳正在查询，请稍候…")
         try:
             self._sync_summary_runtime_client()
             from overstats.src.modules.dashen_summary.requests import DashenSummaryQuery
@@ -635,8 +829,7 @@ class OwDashenPlugin(Star):
             if prefer_img and result.image_bytes:
                 from overstats.src.modules.dashen_match.render import RenderedImage
                 img = RenderedImage(content=result.image_bytes, media_type=result.image_media_type)
-                async for r in self._save_and_send_image(event, img, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, img, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -653,6 +846,7 @@ class OwDashenPlugin(Star):
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
+        yield event.plain_result("⏳正在查询，请稍候…")
         try:
             self._sync_summary_runtime_client()
             from overstats.src.modules.dashen_summary.requests import DashenSummaryQuery
@@ -665,8 +859,7 @@ class OwDashenPlugin(Star):
             if prefer_img and result.image_bytes:
                 from overstats.src.modules.dashen_match.render import RenderedImage
                 img = RenderedImage(content=result.image_bytes, media_type=result.image_media_type)
-                async for r in self._save_and_send_image(event, img, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, img, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -683,6 +876,7 @@ class OwDashenPlugin(Star):
         if not tag:
             yield event.plain_result(self._no_bind_hint())
             return
+        yield event.plain_result("⏳正在查询，请稍候…")
         try:
             self._sync_summary_runtime_client()
             from overstats.src.modules.dashen_summary.requests import DashenSummaryQuery
@@ -695,8 +889,7 @@ class OwDashenPlugin(Star):
             if prefer_img and result.image_bytes:
                 from overstats.src.modules.dashen_match.render import RenderedImage
                 img = RenderedImage(content=result.image_bytes, media_type=result.image_media_type)
-                async for r in self._save_and_send_image(event, img, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, img, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -723,8 +916,7 @@ class OwDashenPlugin(Star):
                         f"  {h.rank}. {h.hero_name} 选取率:{h.selection_ratio}% 胜率:{h.win_ratio}%"
                     )
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -746,8 +938,7 @@ class OwDashenPlugin(Star):
             result = await self._pick_rate.query_pick_rate(query, render=prefer_img)
             lines = [f"英雄选取率曲线: {hero} ({mode} {rank})"]
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -769,8 +960,7 @@ class OwDashenPlugin(Star):
                     for item in list(getattr(sec, 'items', []) or [])[:5]:
                         lines.append(f"  {getattr(item, 'title', '?')} - {getattr(item, 'price_raw', '?')} {getattr(item, 'price_currency', '?')}")
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
@@ -791,8 +981,7 @@ class OwDashenPlugin(Star):
                 lines.append(f"标题: {sel.get('title', '?')}")
                 lines.append(f"日期: {sel.get('date_text', '?')}")
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:
