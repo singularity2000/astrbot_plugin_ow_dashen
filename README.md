@@ -311,6 +311,14 @@ AstrBot 插件独立数据目录（data/plugin_data/astrbot_plugin_ow_dashen/）
 
 这些命令请求更多上游数据，耗时会更长。
 
+### 5. Docker / Linux 环境图片中文乱码或不显示
+
+`1.0.1` 起插件已随包内置中文字体，并优先使用内置字体渲染图片。
+
+如果你使用的是更早版本，请在 AstrBot WebUI 更新插件后重试。
+
+如需强制指定自己的中文字体，可以设置环境变量 `OVERSTATS_CJK_FONT` 或 `OVERSTATS_CJK_BOLD_FONT` 指向字体文件路径。
+
 ## 安全提醒
 
 不要把 token 等涉及个人隐私的敏感信息发到公开仓库、公开群聊或 issue。

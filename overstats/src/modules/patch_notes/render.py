@@ -8,21 +8,14 @@ from typing import Any, Mapping, Sequence
 
 from ...constants.backgrounds import build_random_map_background
 
+try:
+    from overstats.src.modules.font_resolver import load_font
+except ModuleNotFoundError:
+    from src.modules.font_resolver import load_font
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RES_DIR = PROJECT_ROOT / "res"
-WINDOWS_FONT_CANDIDATES = (
-    "C:/Windows/Fonts/msyh.ttc",
-    "C:/Windows/Fonts/msyhbd.ttc",
-    "C:/Windows/Fonts/simhei.ttf",
-    "C:/Windows/Fonts/simsun.ttc",
-)
-LOCAL_FONT_CANDIDATES = (
-    RES_DIR / "GrotaRoundedExtraBold.otf",
-    RES_DIR / "BigNoodleToo.ttf",
-    RES_DIR / "en2.ttf",
-    RES_DIR / "en.ttf",
-)
 FINAL_BG = (12, 17, 26)
 BACKGROUND_TOP = (8, 13, 21)
 BACKGROUND_BOTTOM = (18, 28, 43)
@@ -474,18 +467,16 @@ def _text_width(text: str, font: Any) -> float:
 
 
 def _load_font(size: int, *, bold: bool = False) -> Any:
-    from PIL import ImageFont
-
-    windows_candidates = list(WINDOWS_FONT_CANDIDATES)
-    if bold:
-        windows_candidates = [WINDOWS_FONT_CANDIDATES[1], WINDOWS_FONT_CANDIDATES[2], WINDOWS_FONT_CANDIDATES[0], WINDOWS_FONT_CANDIDATES[3]]
-    local_candidates = [str(path) for path in LOCAL_FONT_CANDIDATES]
-    for candidate in windows_candidates + local_candidates:
-        try:
-            return ImageFont.truetype(candidate, size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    fallback = "GrotaRoundedExtraBold.otf" if bold else "en2.ttf"
+    extra = ("BigNoodleToo.ttf", "en.ttf") if bold else ("en.ttf", "BigNoodleToo.ttf")
+    return load_font(
+        size,
+        name="simhei.ttf",
+        fallback=fallback,
+        prefer_cjk=True,
+        bold=bold,
+        extra=extra,
+    )
 
 
 def _resampling_lanczos() -> Any:

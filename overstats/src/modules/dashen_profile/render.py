@@ -12,11 +12,16 @@ try:
 except ModuleNotFoundError:
     from src.modules.query_tool import get_cached_asset_path, load_query_tool
 
+try:
+    from overstats.src.modules.font_resolver import load_font, resolve_resource_dir
+except ModuleNotFoundError:
+    from src.modules.font_resolver import load_font, resolve_resource_dir
+
 from .engine import HeroBillboardEntry, HeroUsageRow, ProfileRenderContext, RolePanelEntry
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
-RESOURCE_DIR = PROJECT_ROOT / "overstats" / "res"
+RESOURCE_DIR = resolve_resource_dir()
 QUERY_TOOL_ASSET_DIR = RESOURCE_DIR / "query_tool_assets"
 ROLE_ICON_FILENAMES = {
     "tank": "tank.png",
@@ -1528,21 +1533,11 @@ def _load_fonts() -> Dict[str, Any]:
 
 
 def _load_font(name: str, size: int, *, windows_fallback: bool = False) -> Any:
-    from PIL import ImageFont
-
-    candidates: list[Path | str] = []
-    if windows_fallback and name.lower() == "simhei.ttf":
-        candidates.extend([Path("C:/Windows/Fonts/simhei.ttf"), Path("C:/Windows/Fonts/msyh.ttc")])
-    candidates.append(RESOURCE_DIR / name)
-    if not windows_fallback:
-        candidates.extend([Path("C:/Windows/Fonts/arial.ttf"), Path("C:/Windows/Fonts/msyh.ttc")])
-
-    for candidate in candidates:
-        try:
-            return ImageFont.truetype(str(candidate), size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    return load_font(
+        size,
+        name=name,
+        prefer_cjk=windows_fallback and name.lower() == "simhei.ttf",
+    )
 
 
 def create_gradient_playtime_bar(

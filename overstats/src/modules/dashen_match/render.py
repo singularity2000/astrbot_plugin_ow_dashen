@@ -14,8 +14,13 @@ try:
 except ModuleNotFoundError:
     from src.modules.query_tool import get_cached_asset_path, load_query_tool
 
+try:
+    from overstats.src.modules.font_resolver import load_font, resolve_resource_dir
+except ModuleNotFoundError:
+    from src.modules.font_resolver import load_font, resolve_resource_dir
 
-RESOURCE_DIR = Path(__file__).resolve().parents[4] / "overstats" / "res"
+
+RESOURCE_DIR = resolve_resource_dir()
 ASSET_MANIFEST_PATH = RESOURCE_DIR / "query_tool_assets" / "assets_manifest.json"
 _ASSET_MANIFEST_CACHE: Dict[str, Any] | None = None
 ROLE_ICON_FILENAMES = {
@@ -1829,68 +1834,28 @@ def _load_ow_config() -> Dict[str, Any]:
 
 
 def _font_resource(name: str, size: int, *, fallback: str | None = None) -> Any:
-    from PIL import ImageFont
-
-    candidates = [RESOURCE_DIR / name]
-    if fallback:
-        candidates.append(RESOURCE_DIR / fallback)
-    candidates.extend(
-        [
-            "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/simhei.ttf",
-        ]
-    )
-    for path in candidates:
-        try:
-            return ImageFont.truetype(str(path), size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    return load_font(size, name=name, fallback=fallback)
 
 
 def _font_chinese(size: int) -> Any:
-    from PIL import ImageFont
-
-    for path in (
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/msyh.ttc",
-        RESOURCE_DIR / "GrotaRoundedExtraBold.otf",
-    ):
-        try:
-            return ImageFont.truetype(str(path), size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    return load_font(
+        size,
+        name="simhei.ttf",
+        fallback="GrotaRoundedExtraBold.otf",
+        prefer_cjk=True,
+    )
 
 
 def _font(size: int, *, prefer_en: bool = False) -> Any:
-    from PIL import ImageFont
-
     if prefer_en:
-        font_paths = (
-            RESOURCE_DIR / "en.ttf",
-            RESOURCE_DIR / "en2.ttf",
-            RESOURCE_DIR / "BigNoodleToo.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/simhei.ttf",
-        )
-    else:
-        font_paths = (
-            "C:/Windows/Fonts/simhei.ttf",
-            "C:/Windows/Fonts/msyh.ttc",
-            RESOURCE_DIR / "GrotaRoundedExtraBold.otf",
-            RESOURCE_DIR / "en2.ttf",
-            RESOURCE_DIR / "en.ttf",
-            "C:/Windows/Fonts/arial.ttf",
-        )
-    for path in font_paths:
-        try:
-            return ImageFont.truetype(str(path), size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+        return load_font(size, name="en.ttf", fallback="en2.ttf")
+    return load_font(
+        size,
+        name="simhei.ttf",
+        fallback="GrotaRoundedExtraBold.otf",
+        prefer_cjk=True,
+        extra=("en2.ttf", "en.ttf"),
+    )
 
 
 def _font_en(size: int) -> Any:

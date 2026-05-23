@@ -34,6 +34,11 @@ from .perf_log import append_perf_log
 from .render_gate import get_global_render_limit, get_global_render_semaphore
 from .stat_reference import get_cached_statmap_summary as _shared_get_cached_statmap_summary
 
+try:
+    from overstats.src.modules.font_resolver import load_font
+except ModuleNotFoundError:
+    from src.modules.font_resolver import load_font
+
 logger = logging.getLogger("astrbot")
 
 
@@ -1419,20 +1424,13 @@ def _load_font(size, bold=False):
     elif adjusted_size <= 18:
         adjusted_size += 1
     size = adjusted_size
-    candidates = [
-        r"C:\Windows\Fonts\msyhbd.ttc" if bold else r"C:\Windows\Fonts\msyh.ttc",
-        r"C:\Windows\Fonts\simhei.ttf",
-        os.path.join(MODULE_DIR, "res", "en.ttf"),
-    ]
-    for path in candidates:
-        try:
-            if path and os.path.exists(path):
-                font = ImageFont.truetype(path, size)
-                _SUMMARY_FONT_CACHE[cache_key] = font
-                return font
-        except Exception:
-            continue
-    font = ImageFont.load_default()
+    font = load_font(
+        size,
+        name="simhei.ttf",
+        fallback="en.ttf",
+        prefer_cjk=True,
+        bold=bold,
+    )
     _SUMMARY_FONT_CACHE[cache_key] = font
     return font
 

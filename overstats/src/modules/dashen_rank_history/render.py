@@ -15,11 +15,16 @@ try:
 except ModuleNotFoundError:
     from src.modules.query_tool import get_cached_asset_path, load_query_tool
 
+try:
+    from overstats.src.modules.font_resolver import load_font, resolve_resource_dir
+except ModuleNotFoundError:
+    from src.modules.font_resolver import load_font, resolve_resource_dir
+
 from .requests import fight_payload_has_content, payload_data, sport_payload_has_content
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[4]
-RESOURCE_DIR = PROJECT_ROOT / "overstats" / "res"
+RESOURCE_DIR = resolve_resource_dir()
 SEASON_LOGO_DIR = RESOURCE_DIR / "season_logo"
 RANK_FLAT_DIR = RESOURCE_DIR / "rank_flat"
 QUERY_TOOL_ASSET_DIR = RESOURCE_DIR / "query_tool_assets"
@@ -524,39 +529,16 @@ def _load_local_rgba(path: Path) -> Any:
 
 
 def _font_resource(name: str, size: int, *, fallback: str | None = None) -> Any:
-    from PIL import ImageFont
-
-    candidates = [RESOURCE_DIR / name]
-    if fallback:
-        candidates.append(RESOURCE_DIR / fallback)
-    candidates.extend(
-        [
-            "C:/Windows/Fonts/arial.ttf",
-            "C:/Windows/Fonts/msyh.ttc",
-            "C:/Windows/Fonts/simhei.ttf",
-        ]
-    )
-    for path in candidates:
-        try:
-            return ImageFont.truetype(str(path), size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    return load_font(size, name=name, fallback=fallback)
 
 
 def _font_chinese(size: int) -> Any:
-    from PIL import ImageFont
-
-    for path in (
-        "C:/Windows/Fonts/simhei.ttf",
-        "C:/Windows/Fonts/msyh.ttc",
-        RESOURCE_DIR / "GrotaRoundedExtraBold.otf",
-    ):
-        try:
-            return ImageFont.truetype(str(path), size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    return load_font(
+        size,
+        name="simhei.ttf",
+        fallback="GrotaRoundedExtraBold.otf",
+        prefer_cjk=True,
+    )
 
 
 def _load_fonts() -> Dict[str, Any]:

@@ -15,6 +15,11 @@ try:
 except ModuleNotFoundError:
     from src.modules.query_tool import get_cached_asset_path
 
+try:
+    from overstats.src.modules.font_resolver import load_font
+except ModuleNotFoundError:
+    from src.modules.font_resolver import load_font
+
 
 def _resolve_resource_dir() -> Path:
     here = Path(__file__).resolve()
@@ -1103,40 +1108,17 @@ def _load_fonts(scale: int) -> Dict[str, Any]:
 
 
 def _font_resource(name: str, size: int, *, fallback: str | None = None) -> Any:
-    from PIL import ImageFont
-
-    candidates = [RESOURCE_DIR / name]
-    if fallback:
-        candidates.append(RESOURCE_DIR / fallback)
-    candidates.extend(
-        [
-            Path("C:/Windows/Fonts/arial.ttf"),
-            Path("C:/Windows/Fonts/msyh.ttc"),
-            Path("C:/Windows/Fonts/simhei.ttf"),
-        ]
-    )
-    for path in candidates:
-        try:
-            return ImageFont.truetype(str(path), size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    return load_font(size, name=name, fallback=fallback)
 
 
 def _font_chinese(size: int, *, bold: bool = False) -> Any:
-    from PIL import ImageFont
-
-    candidates = [
-        Path("C:/Windows/Fonts/msyhbd.ttc" if bold else "C:/Windows/Fonts/msyh.ttc"),
-        Path("C:/Windows/Fonts/simhei.ttf"),
-        RESOURCE_DIR / "GrotaRoundedExtraBold.otf",
-    ]
-    for path in candidates:
-        try:
-            return ImageFont.truetype(str(path), size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    return load_font(
+        size,
+        name="simhei.ttf",
+        fallback="GrotaRoundedExtraBold.otf",
+        prefer_cjk=True,
+        bold=bold,
+    )
 
 
 def _measure_text(draw: Any, text: str, font: Any) -> int:

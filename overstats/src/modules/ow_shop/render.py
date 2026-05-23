@@ -9,21 +9,14 @@ from ...constants.backgrounds import build_random_map_background
 
 from .requests import OWShopSection
 
+try:
+    from overstats.src.modules.font_resolver import load_font
+except ModuleNotFoundError:
+    from src.modules.font_resolver import load_font
+
 
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 RES_DIR = PROJECT_ROOT / "res"
-WINDOWS_FONT_CANDIDATES = (
-    "C:/Windows/Fonts/msyh.ttc",
-    "C:/Windows/Fonts/msyhbd.ttc",
-    "C:/Windows/Fonts/simhei.ttf",
-    "C:/Windows/Fonts/simsun.ttc",
-)
-LOCAL_FONT_CANDIDATES = (
-    RES_DIR / "en2.ttf",
-    RES_DIR / "en.ttf",
-    RES_DIR / "GrotaRoundedExtraBold.otf",
-    RES_DIR / "BigNoodleToo.ttf",
-)
 BACKGROUND_RGB = (25, 30, 40)
 CARD_BG_RGB = (50, 60, 75)
 TEXT_MUTED = (190, 198, 210)
@@ -281,15 +274,13 @@ def _text_width(text: str, font: Any) -> float:
 
 
 def _load_font(size: int) -> Any:
-    from PIL import ImageFont
-
-    candidates = list(WINDOWS_FONT_CANDIDATES) + [str(path) for path in LOCAL_FONT_CANDIDATES]
-    for candidate in candidates:
-        try:
-            return ImageFont.truetype(candidate, size)
-        except Exception:
-            continue
-    return ImageFont.load_default()
+    return load_font(
+        size,
+        name="simhei.ttf",
+        fallback="en2.ttf",
+        prefer_cjk=True,
+        extra=("en.ttf", "GrotaRoundedExtraBold.otf", "BigNoodleToo.ttf"),
+    )
 
 
 def _resampling_lanczos() -> Any:
