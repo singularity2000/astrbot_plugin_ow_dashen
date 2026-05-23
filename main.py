@@ -6,6 +6,7 @@ import json
 import os
 import shutil
 import sys
+import base64
 from pathlib import Path
 
 from astrbot.api import logger
@@ -496,7 +497,7 @@ class OwDashenPlugin(Star):
 
     @ow.command("对局详情")
     async def ow_match_detail(self, event: AstrMessageEvent, battletag: str | int | None = None, index: int | str = 1):
-        '''查单场对局详细数据'''
+        '''查单场对局详细数据（自动包含主图、全员数据、AI锐评）'''
         if not self._account_features_ready() or self._match is None:
             yield event.plain_result(self._account_not_configured_hint())
             return
@@ -509,19 +510,33 @@ class OwDashenPlugin(Star):
         try:
             from overstats.src.modules.dashen_match.requests import DashenMatchQuery
             query = DashenMatchQuery(bnet_id=tag)
-            output_cfg = self.config.get("output", {})
-            prefer_img = output_cfg.get("prefer_image_for_match_detail", True)
-            if prefer_img:
-                await self._ensure_query_tool_assets_ready()
-            result = await self._match.query_match_detail_by_index(query, index - 1, render=prefer_img)
-            detail = result.detail
-            lines = [f"对局详情 (第{index}场)"]
-            lines.append(f"match_id: {detail.match_id}")
-            if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
-            else:
-                yield event.plain_result("\n".join(lines))
+            # 确保素材缓存就绪（图片可能用到英雄头像等）
+            await self._ensure_query_tool_assets_ready()
+            
+            # 调用 query_match_detail_replies，启用全员数据和 AI 分析
+            result = await self._match.query_match_detail_replies(
+                query=query,
+                index=index - 1,
+                show_all_heroes=True,
+                analyze=True
+            )
+            
+            # 遍历所有回复（包含 meta、image、text）
+            for reply in result.replies:
+                if reply["type"] == "image":
+                    # 构造 RenderedImage 对象并发送
+                    from overstats.src.modules.dashen_match.render import RenderedImage
+                    img = RenderedImage(
+                        content=base64.b64decode(reply["base64"]),
+                        media_type=reply.get("media_type", "image/png")
+                    )
+                    async for r in self._save_and_send_image(event, img, ""):
+                        yield r
+                elif reply["type"] == "text":
+                    # 发送文字提示（如 AI 分析失败时的回退文字）
+                    yield event.plain_result(reply.get("data", ""))
+                # meta 类型消息忽略，仅用于内部上下文
+            
         except Exception as e:
             logger.error(f"[ow_dashen] 对局详情查询失败: {e}")
             yield event.plain_result(f"查询失败：{e}")
