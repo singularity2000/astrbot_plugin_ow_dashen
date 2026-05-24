@@ -69,6 +69,7 @@ class APIConfig:
     port: int
     use_stream_response: bool
     dashen_max_concurrent_requests: int
+    dashen_max_accepted_requests: int = 4
 
 
 @dataclass(frozen=True)
@@ -93,6 +94,7 @@ class DashenClientConfig:
     account_failure_cooldown_seconds: int
     international_proxy: str
     netease_proxies: Tuple[Optional[str], ...]
+    ow_esports_api_key: str
     ow_esports_url: str
     ow_esports_payload: Dict[str, Any]
 
@@ -150,6 +152,22 @@ def _normalize_accounts() -> Tuple[DashenCredentialConfig, ...]:
     return tuple(normalized_accounts)
 
 
+def _default_dashen_max_accepted_requests() -> int:
+    raw_accounts = config._INJECTED_CONFIG.get("dashen_accounts", []) if config._INJECTED_CONFIG is not None else getattr(config, "DASHEN_ACCOUNTS", [])
+    if not isinstance(raw_accounts, (list, tuple)):
+        return 4
+    enabled_count = 0
+    for raw_account in raw_accounts:
+        if not isinstance(raw_account, dict):
+            continue
+        enabled = raw_account.get("enabled", True)
+        if isinstance(enabled, str):
+            enabled = enabled.strip().lower() in {"1", "true", "yes", "on"}
+        if enabled:
+            enabled_count += 1
+    return max(1, enabled_count * 4)
+
+
 def get_api_config() -> APIConfig:
     injected = config._INJECTED_CONFIG or {}
     injected_global = injected.get("dashen_global", {})
@@ -164,6 +182,16 @@ def get_api_config() -> APIConfig:
             "OVERSTATS_DASHEN_MAX_CONCURRENT_REQUESTS",
             injected_global.get("max_concurrent_requests", getattr(config, "DASHEN_MAX_CONCURRENT_REQUESTS", 2)),
         ),
+        dashen_max_accepted_requests=max(
+            1,
+            _read_int_env(
+                "OVERSTATS_DASHEN_MAX_ACCEPTED_REQUESTS",
+                injected_global.get(
+                    "max_accepted_requests",
+                    getattr(config, "DASHEN_MAX_ACCEPTED_REQUESTS", _default_dashen_max_accepted_requests()),
+                ),
+            ),
+        ),
     )
 
 
@@ -172,6 +200,7 @@ def get_dashen_client_config() -> DashenClientConfig:
     injected = config._INJECTED_CONFIG or {}
     injected_global = injected.get("dashen_global", {})
     injected_network = injected.get("network", {})
+    netease_proxy = str(injected_network.get("netease_proxy", getattr(config, "DASHEN_INTERNATIONAL_PROXY", "")) or "").strip()
     cooldown_seconds = _as_positive_int(
         injected_global.get("account_failure_cooldown_seconds", getattr(config, "DASHEN_ACCOUNT_FAILURE_COOLDOWN_SECONDS", 60)),
         "DASHEN_ACCOUNT_FAILURE_COOLDOWN_SECONDS",
@@ -207,8 +236,9 @@ def get_dashen_client_config() -> DashenClientConfig:
             "DASHEN_USER_AGENT",
         ),
         account_failure_cooldown_seconds=cooldown_seconds,
-        international_proxy=str(injected_network.get("netease_proxy", getattr(config, "DASHEN_INTERNATIONAL_PROXY", "")) or "").strip(),
-        netease_proxies=_normalize_proxy_pool([None]),
+        international_proxy=netease_proxy,
+        netease_proxies=_normalize_proxy_pool([None, netease_proxy] if netease_proxy else [None]),
+        ow_esports_api_key=str(getattr(config, "OW_ESPORTS_API_KEY", "") or "").strip(),
         ow_esports_url=str(getattr(config, "OW_ESPORTS_URL", "") or "").strip(),
         ow_esports_payload=dict(getattr(config, "OW_ESPORTS_PAYLOAD", {"ids": []}) or {"ids": []}),
     )

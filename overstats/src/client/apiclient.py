@@ -163,6 +163,39 @@ ACCOUNT_RATE_LIMIT_WINDOW_SECONDS = 1.0
 ACCOUNT_MAX_REQUESTS_PER_SECOND = 5
 
 
+def _build_ow_esports_headers(api_key: Optional[str]) -> Dict[str, str]:
+    headers = {"Accept": "application/json"}
+    normalized = str(api_key or "").strip()
+    if not normalized or normalized.lower().startswith("replace-with-your-"):
+        return headers
+    if normalized.lower().startswith("bearer "):
+        headers["Authorization"] = normalized
+    else:
+        headers["Authorization"] = f"Bearer {normalized}"
+    return headers
+
+
+def _apply_client_config(client_config: DashenClientConfig) -> None:
+    global CLIENT_CONFIG, DASHEN_BIGDATA_DTS, DASHEN_CLIENT_TYPE, DASHEN_ORIGIN, DASHEN_REFERER, DASHEN_USER_AGENT
+    global DASHEN_ACCOUNT_FAILURE_COOLDOWN_SECONDS, INTERNATIONAL_PROXY, NETEASE_PROXIES
+    global ACCOUNT_RATE_LIMIT_WINDOW_SECONDS, ACCOUNT_MAX_REQUESTS_PER_SECOND, OW_ESPORTS_URL, OW_ESPORTS_PAYLOAD, OW_ESPORTS_HEADERS
+
+    CLIENT_CONFIG = client_config
+    DASHEN_BIGDATA_DTS = int(client_config.bigdata_dts)
+    DASHEN_CLIENT_TYPE = str(client_config.client_type)
+    DASHEN_ORIGIN = str(client_config.origin)
+    DASHEN_REFERER = str(client_config.referer)
+    DASHEN_USER_AGENT = str(client_config.user_agent)
+    DASHEN_ACCOUNT_FAILURE_COOLDOWN_SECONDS = float(client_config.account_failure_cooldown_seconds)
+    INTERNATIONAL_PROXY = str(client_config.international_proxy or "").strip()
+    NETEASE_PROXIES = tuple(client_config.netease_proxies or (None,))
+    ACCOUNT_RATE_LIMIT_WINDOW_SECONDS = max(0.2, float(client_config.account_rate_limit_window_seconds))
+    ACCOUNT_MAX_REQUESTS_PER_SECOND = max(1, int(client_config.account_max_requests_per_second))
+    OW_ESPORTS_URL = str(getattr(client_config, "ow_esports_url", "") or "").strip()
+    OW_ESPORTS_PAYLOAD = dict(getattr(client_config, "ow_esports_payload", {"ids": []}) or {"ids": []})
+    OW_ESPORTS_HEADERS = _build_ow_esports_headers(getattr(client_config, "ow_esports_api_key", ""))
+
+
 def _default_client_headers() -> Dict[str, str]:
     return {
         "Accept": "application/json, text/plain, */*",
@@ -803,6 +836,8 @@ class DashenAPIClient:
         server: Optional[int] = None,
         token: Optional[str] = None,
     ) -> None:
+        if client_config is not None:
+            _apply_client_config(client_config)
         self.client_config = client_config or CLIENT_CONFIG
         self.request_metrics_recorder = request_metrics_recorder
         self.netease_client = netease_client or _build_default_netease_client()
@@ -1199,6 +1234,10 @@ def init_dashen_api_client(client_config: Optional[DashenClientConfig] = None) -
     global dashen_api_client, http_client, http_client_with_proxy
     if dashen_api_client is not None and client_config is None:
         return dashen_api_client
+    if dashen_api_client is not None:
+        raise RuntimeError("Dashen API client is already initialized. Close it before reinitializing.")
+    if client_config is not None:
+        _apply_client_config(client_config)
     dashen_api_client = DashenAPIClient(client_config=client_config)
     http_client = dashen_api_client.netease_client
     http_client_with_proxy = dashen_api_client.proxy_client
@@ -1225,5 +1264,9 @@ async def request_bytes(url: str, **kwargs: Any) -> bytes:
 
 
 async def close_default_clients() -> None:
+    global dashen_api_client, http_client, http_client_with_proxy
     if dashen_api_client is not None:
         await dashen_api_client.aclose()
+    dashen_api_client = None
+    http_client = None
+    http_client_with_proxy = None

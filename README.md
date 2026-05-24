@@ -184,7 +184,8 @@ AstrBot 插件独立数据目录（data/plugin_data/astrbot_plugin_ow_dashen/）
 └─ overstats/
    ├─ db/
    │  ├─ match_stats.sqlite3                 # 本地比赛统计 / 总结相关数据库
-   │  └─ ow_hero_leaderboard.sqlite3         # 英雄热度 / 英雄曲线数据库
+   │  ├─ ow_hero_leaderboard.sqlite3         # 英雄热度 / 英雄曲线数据库
+   │  └─ request_metrics.sqlite3             # 请求成功率统计数据库
    ├─ cache_img/                             # 下载到本地的头像 / 远程资源图缓存
    ├─ query_tool.json                        # 从网易大神同步并本地缓存的 query tool 配置
    ├─ query_tool_assets/                     # query tool 相关静态资源缓存

@@ -387,7 +387,9 @@ class OwDashenPlugin(Star):
             return
         try:
             _TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
-            img_path = _TEMP_IMAGE_DIR / f"{hash(rendered.content)}.png"
+            media_type = str(getattr(rendered, "media_type", "image/png") or "image/png").lower()
+            suffix = ".jpg" if media_type in {"image/jpeg", "image/jpg"} else ".png"
+            img_path = _TEMP_IMAGE_DIR / f"{hash(rendered.content)}{suffix}"
             img_path.write_bytes(rendered.content)
             
             from astrbot.core.message.components import Image
@@ -497,7 +499,7 @@ class OwDashenPlugin(Star):
             "本周总结": "查本周总结（数据量大，需较长时间）。\n用法：/ow 本周总结 [BattleTag]",
             "英雄热度": "查英雄选取率榜单。\n用法：/ow 英雄热度 [模式] [段位]\n模式：快速/竞技；段位：全部/青铜/白银/黄金/铂金/钻石/大师/宗师/冠军\n示例：/ow 英雄热度 竞技 大师",
             "英雄曲线": "查单英雄选取率历史曲线。\n用法：/ow 英雄曲线 <英雄名> [模式] [段位]\n示例：/ow 英雄曲线 安娜 竞技 大师",
-            "商店": "查当前守望先锋商店。\n用法：/ow 商店",
+            "商店": "查当前守望先锋商店。\n用法：/ow 商店\n说明：如果商店图超过平台常见发送限制，会自动缩放或转成 JPEG 压缩后发送。",
             "补丁": "查补丁说明。\n用法：/ow 补丁 [类型]\n类型：最新/小更新/大更新\n示例：/ow 补丁 大更新",
             "搜索玩家": "搜索玩家。\n用法：/ow 搜索玩家 <关键词>\n示例：/ow 搜索玩家 Nickname",
             "自检": "[管理员] 检查账号配置、客户端状态和素材缓存。\n用法：/ow 自检",
@@ -565,8 +567,7 @@ class OwDashenPlugin(Star):
             result = await self._profile.query_profile(query, render=prefer_img)
             lines = [f"玩家：{result.resolved_bnet.full_id if result.resolved_bnet else tag}"]
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 lines.append(f"赛季: {result.bundle.logical_season}")
                 yield event.plain_result("\n".join(lines))
@@ -602,8 +603,7 @@ class OwDashenPlugin(Star):
                 hero = m.get("heroGuid", "?")
                 lines.append(f"  {i+1}. {result_str} | 英雄: {hero}")
             if prefer_img and result.image:
-                async for r in self._save_and_send_image(event, result.image, "\n".join(lines)):
-                    yield r
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
             else:
                 yield event.plain_result("\n".join(lines))
         except Exception as e:

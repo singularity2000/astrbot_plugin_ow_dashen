@@ -8,8 +8,13 @@ import sqlite3
 from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
+try:
+    from overstats.paths import ensure_dir, get_overstats_data_dir
+except ModuleNotFoundError:
+    from paths import ensure_dir, get_overstats_data_dir
 
-REQUEST_METRICS_DB_PATH = Path(__file__).resolve().parent / "request_metrics.sqlite3"
+
+REQUEST_METRICS_DB_PATH = ensure_dir(get_overstats_data_dir() / "db") / "request_metrics.sqlite3"
 REQUEST_METRICS_TABLE = "request_url_stats"
 REQUEST_SOURCE_MODULE = "module"
 REQUEST_SOURCE_UPSTREAM = "upstream"

@@ -53,12 +53,16 @@ DASHEN_USER_AGENT = (
 )
 DASHEN_ACCOUNT_FAILURE_COOLDOWN_SECONDS = _get("dashen_global_account_failure_cooldown_seconds", 60)
 DASHEN_MAX_CONCURRENT_REQUESTS = _get("dashen_global_max_concurrent_requests", 2)
+DASHEN_MAX_ACCEPTED_REQUESTS = 4
 
 DASHEN_INTERNATIONAL_PROXY = _get("network_netease_proxy", "")
 DASHEN_NETEASE_PROXIES = [None]
 
+OW_ESPORTS_API_KEY = ""
 OW_ESPORTS_URL = ""
 OW_ESPORTS_PAYLOAD = {"ids": []}
+
+OW_GUESS_ASSET_ROOT = ""
 
 OW_HERO_LEADERBOARD_CN_SEASON = 2
 

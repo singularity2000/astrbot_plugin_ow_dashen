@@ -24,6 +24,11 @@ REFRESH_LABEL = "\u5237\u65b0"
 GENERATED_AT_LABEL = "\u751f\u6210\u65f6\u95f4"
 HUGE_BUNDLE_KEYWORD = "\u8d85\u7ea7\u793c\u5305"
 
+MAX_RENDER_BYTES = 5 * 1024 * 1024
+PNG_SCALE_STEPS = (0.985, 0.97, 0.955, 0.94, 0.925, 0.91)
+JPEG_QUALITY_STEPS = (96, 94, 92, 90, 88, 86, 84, 82)
+JPEG_SCALE_STEPS = (1.0, 0.985, 0.97, 0.955, 0.94, 0.925, 0.91, 0.895, 0.88, 0.865, 0.85)
+
 
 @dataclass(frozen=True)
 class RenderedImage:
@@ -158,9 +163,7 @@ def render_ow_shop(
         )
         final_img.alpha_composite(overlay, (x, y))
 
-    output = BytesIO()
-    final_img.convert("RGB").save(output, format="PNG", optimize=True)
-    return RenderedImage(content=output.getvalue())
+    return _encode_rendered_image(final_img)
 
 
 def _render_text_overlay(
@@ -223,6 +226,87 @@ def _create_card_image(image_path: Path | None, target_w: int, target_h: int, bg
     mask_draw.rounded_rectangle((0, 0, target_w, target_h), radius=20, fill=255)
     card.putalpha(mask)
     return card
+
+
+def _encode_rendered_image(image: Any, *, max_bytes: int = MAX_RENDER_BYTES) -> RenderedImage:
+    rgb_image = image.convert("RGB")
+    png_bytes = _save_png_bytes(rgb_image)
+    if len(png_bytes) <= max_bytes:
+        return RenderedImage(content=png_bytes, media_type="image/png")
+    return _compress_rendered_image(rgb_image, max_bytes=max_bytes, fallback_bytes=png_bytes)
+
+
+def _compress_rendered_image(image: Any, *, max_bytes: int, fallback_bytes: bytes) -> RenderedImage:
+    best_bytes = fallback_bytes
+    best_media_type = "image/png"
+    scaled_images: dict[float, Any] = {1.0: image}
+
+    for scale in PNG_SCALE_STEPS:
+        candidate = _scaled_image(image, scale=scale, cache=scaled_images)
+        png_bytes = _save_png_bytes(candidate)
+        if len(png_bytes) < len(best_bytes):
+            best_bytes = png_bytes
+            best_media_type = "image/png"
+        if len(png_bytes) <= max_bytes:
+            return RenderedImage(content=png_bytes, media_type="image/png")
+
+    for quality in JPEG_QUALITY_STEPS:
+        for scale in JPEG_SCALE_STEPS:
+            candidate = _scaled_image(image, scale=scale, cache=scaled_images)
+            jpeg_bytes = _save_jpeg_bytes(candidate, quality=quality)
+            if len(jpeg_bytes) < len(best_bytes):
+                best_bytes = jpeg_bytes
+                best_media_type = "image/jpeg"
+            if len(jpeg_bytes) <= max_bytes:
+                return RenderedImage(content=jpeg_bytes, media_type="image/jpeg")
+
+    return RenderedImage(content=best_bytes, media_type=best_media_type)
+
+
+def _scaled_image(image: Any, *, scale: float, cache: dict[float, Any]) -> Any:
+    if scale in cache:
+        return cache[scale]
+    source_width = max(1, int(image.width))
+    source_height = max(1, int(image.height))
+    scaled = image.resize(
+        (
+            max(1, int(source_width * scale)),
+            max(1, int(source_height * scale)),
+        ),
+        _resampling_lanczos(),
+    )
+    cache[scale] = scaled
+    return scaled
+
+
+def _save_png_bytes(image: Any) -> bytes:
+    output = BytesIO()
+    image.save(output, format="PNG", optimize=True)
+    return output.getvalue()
+
+
+def _save_jpeg_bytes(image: Any, *, quality: int) -> bytes:
+    output = BytesIO()
+    try:
+        image.save(
+            output,
+            format="JPEG",
+            quality=max(70, int(quality)),
+            optimize=True,
+            progressive=True,
+            subsampling=0,
+        )
+    except OSError:
+        output = BytesIO()
+        image.save(
+            output,
+            format="JPEG",
+            quality=max(70, int(quality) - 4),
+            optimize=False,
+            progressive=False,
+            subsampling=0,
+        )
+    return output.getvalue()
 
 
 def _price_label(price_raw: int | float, currency: str) -> tuple[str, tuple[int, int, int]]:
