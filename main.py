@@ -65,6 +65,10 @@ class OwDashenPlugin(Star):
         self._shop = None
         self._patch_notes = None
         self._identity_search = None
+        self._sameplay = None
+        self._hero_perk = None
+        self._hero_wiki = None
+        self._match_detail_recorder = None
 
     def _account_features_ready(self) -> bool:
         return self._api_client is not None and self._bnet_search is not None
@@ -105,6 +109,15 @@ class OwDashenPlugin(Star):
         from overstats.src.modules.player_identity_search.service import PlayerIdentitySearchModule
         self._identity_search = PlayerIdentitySearchModule()
 
+        from overstats.src.modules.ow_hero_perk.service import OWHeroPerkModule
+        self._hero_perk = OWHeroPerkModule()
+
+        from overstats.src.modules.ow_hero_wiki.service import OWHeroWikiModule
+        self._hero_wiki = OWHeroWikiModule()
+
+        from overstats.src.db.match_detail_recorder import MatchDetailRecorder
+        self._match_detail_recorder = MatchDetailRecorder()
+
         try:
             from overstats.config.loader import get_dashen_client_config
             client_config = get_dashen_client_config()
@@ -132,6 +145,12 @@ class OwDashenPlugin(Star):
 
             from overstats.src.modules.dashen_summary.service import DashenSummaryModule
             self._summary = DashenSummaryModule(search_module=self._bnet_search)
+
+            from overstats.src.modules.dashen_sameplay.service import DashenSameplayModule
+            from overstats.src.modules.dashen_match.requests import DashenMatchRequests
+            sameplay_requests = DashenMatchRequests(api_client=self._api_client)
+            self._sameplay = DashenSameplayModule(requests=sameplay_requests)
+            self._sameplay.match_module = self._match
         except ValueError as e:
             logger.warning(f"[ow_dashen] 插件已加载，但大神账号尚未配置完成: {e}")
             self._api_client = None
@@ -142,14 +161,18 @@ class OwDashenPlugin(Star):
             self._quick_strength = None
             self._competitive_strength = None
             self._summary = None
+            self._sameplay = None
 
         # 劫持 Overstats 内部的大模型调用以复用 AstrBot 官方 LLM 提供商
         try:
             from overstats.src.modules.dashen_match.service import DashenMatchModule
             from overstats.src.modules.patch_notes.requests import PatchNotesRequests
+            from overstats.src.modules.ow_hero_wiki.requests import WikiRequests
             
             original_call_openai = DashenMatchModule._call_openai_compatible
             original_translate_batch = PatchNotesRequests._translate_text_batch
+            original_wiki_translate = WikiRequests.translate_texts
+            original_wiki_answer = WikiRequests.answer_question
             plugin_self = self
             
             async def hooked_call_openai_compatible(service_self, url, api_key, payload):
@@ -209,7 +232,7 @@ class OwDashenPlugin(Star):
                 
                 if not enable_translation or not provider_id:
                     return list(texts)
-                    
+
                 from overstats.src.modules.patch_notes.requests import _build_patch_translation_prompt
                 prompt_content = _build_patch_translation_prompt(texts, glossary)
                 
@@ -231,9 +254,67 @@ class OwDashenPlugin(Star):
                 except Exception as le:
                     logger.error(f"[ow_dashen] 补丁翻译 LLM 调用失败，退回原文: {le}")
                     return list(texts)
+
+            async def hooked_wiki_translate_texts(requests_self, texts, glossary=()):
+                provider_id = plugin_self.config.get("analysis", {}).get("analysis_provider", "")
+                if not provider_id:
+                    return await original_wiki_translate(requests_self, texts, glossary=glossary)
+                from overstats.src.modules.ow_hero_wiki.requests import _build_translation_prompt, _extract_json_array_text
+                prompt_content = _build_translation_prompt(texts, glossary)
+                try:
+                    llm_response = await plugin_self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=prompt_content,
+                    )
+                    translations = json.loads(_extract_json_array_text(llm_response.completion_text))
+                    if not isinstance(translations, list) or len(translations) != len(texts):
+                        raise ValueError("Wiki translation count mismatch")
+                    return [str(item or "").strip() for item in translations]
+                except Exception as le:
+                    logger.error(f"[ow_dashen] 英雄维基翻译 LLM 调用失败，退回原文: {le}")
+                    return None
+
+            async def hooked_wiki_answer_question(
+                requests_self,
+                *,
+                hero_cn,
+                hero_en,
+                question,
+                context_text,
+                glossary=(),
+            ):
+                provider_id = plugin_self.config.get("analysis", {}).get("analysis_provider", "")
+                if not provider_id:
+                    return await original_wiki_answer(
+                        requests_self,
+                        hero_cn=hero_cn,
+                        hero_en=hero_en,
+                        question=question,
+                        context_text=context_text,
+                        glossary=glossary,
+                    )
+                from overstats.src.modules.ow_hero_wiki.requests import _build_question_prompt
+                prompt_content = _build_question_prompt(
+                    hero_cn=hero_cn,
+                    hero_en=hero_en,
+                    question=question,
+                    context_text=context_text,
+                    glossary=glossary,
+                )
+                try:
+                    llm_response = await plugin_self.context.llm_generate(
+                        chat_provider_id=provider_id,
+                        prompt=prompt_content,
+                    )
+                    return str(llm_response.completion_text or "").strip()
+                except Exception as le:
+                    logger.error(f"[ow_dashen] 英雄维基问答 LLM 调用失败: {le}")
+                    return None
                     
             DashenMatchModule._call_openai_compatible = hooked_call_openai_compatible
             PatchNotesRequests._translate_text_batch = hooked_translate_text_batch
+            WikiRequests.translate_texts = hooked_wiki_translate_texts
+            WikiRequests.answer_question = hooked_wiki_answer_question
             logger.info("[ow_dashen] 已成功挂载 AstrBot 官方大模型代理劫持器")
         except Exception as patch_e:
             logger.error(f"[ow_dashen] 劫持大模型接口失败: {patch_e}")
@@ -241,6 +322,11 @@ class OwDashenPlugin(Star):
         logger.info("[ow_dashen] 插件初始化完成，所有模块已加载")
 
     async def terminate(self) -> None:
+        if self._match_detail_recorder is not None:
+            try:
+                await self._match_detail_recorder.close()
+            except Exception as e:
+                logger.warning(f"[ow_dashen] 关闭对局详情记录器时出错: {e}")
         if self._hero_leaderboard_sync is not None:
             try:
                 await self._hero_leaderboard_sync.close()
@@ -279,6 +365,34 @@ class OwDashenPlugin(Star):
             return None, first_number
         return self._normalize_optional_text(battletag_or_number), explicit_number
 
+    def _split_sameplay_list_args(
+        self,
+        first: object,
+        second: object,
+        third: object,
+    ) -> tuple[str | None, str | None, int]:
+        third_number = self._coerce_int(third)
+        second_number = self._coerce_int(second)
+        if third_number is not None:
+            return self._normalize_optional_text(first), self._normalize_optional_text(second), third_number
+        if second_number is not None:
+            return None, self._normalize_optional_text(first), second_number
+        return self._normalize_optional_text(first), self._normalize_optional_text(second), 10
+
+    def _split_sameplay_detail_args(
+        self,
+        first: object,
+        second: object,
+        third: object,
+    ) -> tuple[str | None, str | None, int | None]:
+        third_number = self._coerce_int(third)
+        if third_number is not None:
+            return self._normalize_optional_text(first), self._normalize_optional_text(second), third_number
+        second_number = self._coerce_int(second)
+        if second_number is not None:
+            return None, self._normalize_optional_text(first), second_number
+        return self._normalize_optional_text(first), self._normalize_optional_text(second), None
+
     def _sync_summary_runtime_client(self) -> None:
         if self._api_client is None:
             return
@@ -300,6 +414,54 @@ class OwDashenPlugin(Star):
             await asyncio.to_thread(ensure_query_tool_assets, config)
         except Exception as e:
             logger.warning(f"[ow_dashen] 预加载 query_tool 素材失败，部分图片元素可能缺失: {e}")
+
+    async def _ensure_sameplay_runtime_ready(self) -> None:
+        if self._sameplay is None or self._api_client is None or self._match is None:
+            return
+        try:
+            from overstats.src.modules.dashen_match.requests import DashenMatchRequests
+            requests = getattr(self._sameplay, "requests", None)
+            if not isinstance(requests, DashenMatchRequests) or not hasattr(requests, "fetch_history_matches_page"):
+                self._sameplay.requests = DashenMatchRequests(api_client=self._api_client)
+            self._sameplay.match_module = self._match
+        except Exception as e:
+            logger.warning(f"[ow_dashen] 同玩模块热重载自检失败: {e}")
+
+    async def _record_match_detail_payload(self, detail, match_id: str = "") -> None:
+        if self._match_detail_recorder is None or detail is None:
+            return
+        payload = getattr(detail, "payload", None)
+        if not isinstance(payload, dict):
+            payload = detail if isinstance(detail, dict) else None
+        if not isinstance(payload, dict):
+            return
+        resolved_match_id = str(match_id or getattr(detail, "match_id", "") or "").strip()
+        if not resolved_match_id:
+            return
+        try:
+            await self._match_detail_recorder.enqueue(f"astrbot://match-detail?matchId={resolved_match_id}", payload)
+        except Exception as e:
+            logger.debug(f"[ow_dashen] 记录对局详情统计失败: {e}")
+
+    async def _send_reply_images(self, event: AstrMessageEvent, replies: list[dict], *, send_text: bool = False) -> None:
+        import base64
+        from overstats.src.modules.dashen_match.render import RenderedImage
+
+        for reply in replies:
+            if reply.get("type") == "image":
+                img_obj = RenderedImage(
+                    content=base64.b64decode(reply.get("base64") or ""),
+                    media_type=reply.get("media_type", "image/png"),
+                )
+                await self._save_and_send_image(event, img_obj)
+            elif send_text and reply.get("type") == "text":
+                text = str(reply.get("data") or "").strip()
+                if text:
+                    yield_text = getattr(event, "plain_result", None)
+                    if yield_text is None:
+                        continue
+                    from astrbot.core.message.message_event_result import MessageChain
+                    await event.send(MessageChain().message(text))
 
     async def _resolve_battletag(self, event: AstrMessageEvent, explicit_tag: object = None) -> str | None:
         tag = self._normalize_optional_text(explicit_tag)
@@ -452,6 +614,16 @@ class OwDashenPlugin(Star):
                 "  /ow 竞技强度 [BattleTag] [场数]\n"
                 "    竞技模式强度分析；场数 3-12，默认 5\n"
                 "\n"
+                "【同玩】\n"
+                "  /ow 同玩 <玩家2> [场数]\n"
+                "    查询当前绑定账号与玩家2的共同对局；场数默认 10\n"
+                "  /ow 同玩 <玩家1> <玩家2> [场数]\n"
+                "    查询任意两名玩家的共同对局\n"
+                "  /ow 同玩详情 <玩家2> <序号>\n"
+                "    查看某一场同玩对局详情\n"
+                "  /ow 同玩锐评 <玩家2> <序号>\n"
+                "    查看同玩详情、双方英雄详情、全员数据和 AI 锐评\n"
+                "\n"
                 "【总结】\n"
                 "  /ow 今日总结 [BattleTag]\n"
                 "  /ow 昨日总结 [BattleTag]\n"
@@ -463,6 +635,10 @@ class OwDashenPlugin(Star):
                 "    模式：快速/竞技；段位：全部到冠军\n"
                 "  /ow 英雄曲线 <英雄名> [模式] [段位]\n"
                 "    单英雄选取率历史曲线\n"
+                "  /ow 威能 <英雄名>\n"
+                "    查询英雄次级/主要威能、选取率和说明\n"
+                "  /ow 英雄维基 <英雄名> [问题]\n"
+                "    查询英雄技能、生命值、武器、威能；带问题时返回资料问答\n"
                 "  /ow 商店\n"
                 "    当前守望先锋商店\n"
                 "  /ow 补丁 [类型]\n"
@@ -494,11 +670,16 @@ class OwDashenPlugin(Star):
             "段位": "查各赛季段位历史变化。\n用法：/ow 段位 [BattleTag]",
             "快速强度": "查快速模式强度分析。\n用法：/ow 快速强度 [BattleTag] [场数]\n场数范围 3-12，默认 5。",
             "竞技强度": "查竞技模式强度分析。\n用法：/ow 竞技强度 [BattleTag] [场数]\n场数范围 3-12，默认 5。",
+            "同玩": "查询两名玩家共同参与过的对局。\n用法：/ow 同玩 <玩家2> [场数]\n用法：/ow 同玩 <玩家1> <玩家2> [场数]\n说明：如果你已经绑定账号，玩家1可以省略；默认查询当前赛季和上一赛季；场数范围 1-40，默认 10。\n示例：/ow 同玩 wildkid#51909 10",
+            "同玩详情": "查看某一场同玩对局详情。\n用法：/ow 同玩详情 <玩家2> <序号>\n用法：/ow 同玩详情 <玩家1> <玩家2> <序号>\n示例：/ow 同玩详情 wildkid#51909 1",
+            "同玩锐评": "查看同玩详情、双方英雄详情、全员数据和 AI 锐评图。\n用法：/ow 同玩锐评 <玩家2> <序号>\n用法：/ow 同玩锐评 <玩家1> <玩家2> <序号>\n示例：/ow 同玩锐评 wildkid#51909 1",
             "今日总结": "查今日总结。\n用法：/ow 今日总结 [BattleTag]",
             "昨日总结": "查昨日总结。\n用法：/ow 昨日总结 [BattleTag]",
             "本周总结": "查本周总结（数据量大，需较长时间）。\n用法：/ow 本周总结 [BattleTag]",
             "英雄热度": "查英雄选取率榜单。\n用法：/ow 英雄热度 [模式] [段位]\n模式：快速/竞技；段位：全部/青铜/白银/黄金/铂金/钻石/大师/宗师/冠军\n示例：/ow 英雄热度 竞技 大师",
             "英雄曲线": "查单英雄选取率历史曲线。\n用法：/ow 英雄曲线 <英雄名> [模式] [段位]\n示例：/ow 英雄曲线 安娜 竞技 大师",
+            "威能": "查询英雄威能数据，包括次级威能、主要威能、样本数、选取次数、选取率和威能描述。\n用法：/ow 威能 <英雄名>\n示例：/ow 威能 安娜",
+            "英雄维基": "查询英雄资料卡片。会展示英雄定位、生命值、技能、武器、威能和资料来源。\n用法：/ow 英雄维基 <英雄名> [问题]\n示例：/ow 英雄维基 猎空\n示例：/ow 英雄维基 猎空 闪现冷却多久",
             "商店": "查当前守望先锋商店。\n用法：/ow 商店\n说明：如果商店图超过平台常见发送限制，会自动缩放或转成 JPEG 压缩后发送。",
             "补丁": "查补丁说明。\n用法：/ow 补丁 [类型]\n类型：最新/小更新/大更新\n示例：/ow 补丁 大更新",
             "搜索玩家": "搜索玩家。\n用法：/ow 搜索玩家 <关键词>\n示例：/ow 搜索玩家 Nickname",
@@ -640,6 +821,7 @@ class OwDashenPlugin(Star):
                 
             # 默认只发单人主战绩详情图，最速最省流
             result = await self._match.query_match_detail_by_index(query, index_val - 1, render=prefer_img)
+            await self._record_match_detail_payload(result.detail)
             detail = result.detail
             lines = [f"对局详情 (第{index_val}场)"]
             lines.append(f"match_id: {detail.match_id}")
@@ -691,7 +873,12 @@ class OwDashenPlugin(Star):
                 show_all_heroes=True,
                 analyze=need_analyze
             )
-            
+            for reply in result.replies:
+                if reply.get("type") != "meta" or reply.get("meta_type") != "ds_match_detail_record":
+                    continue
+                data = reply.get("data") if isinstance(reply.get("data"), dict) else {}
+                await self._record_match_detail_payload(data.get("detail"), result.match_id)
+             
             img_idx = 0
             for reply in result.replies:
                 if reply["type"] == "image":
@@ -806,6 +993,133 @@ class OwDashenPlugin(Star):
             logger.error(f"[ow_dashen] 竞技强度查询失败: {e}")
             yield event.plain_result(f"查询失败：{e}")
 
+    @ow.command("同玩")
+    async def ow_sameplay(
+        self,
+        event: AstrMessageEvent,
+        player1_or_player2: str | None = None,
+        player2_or_limit: str | int | None = None,
+        limit: int | str | None = None,
+    ):
+        '''查两名玩家共同对局列表'''
+        if not self._account_features_ready() or self._sameplay is None:
+            yield event.plain_result(self._account_not_configured_hint())
+            return
+        player1, player2, limit_value = self._split_sameplay_list_args(player1_or_player2, player2_or_limit, limit)
+        if not player2:
+            yield event.plain_result("请提供玩家2。用法：/ow 同玩 <玩家2> [场数]，或 /ow 同玩 <玩家1> <玩家2> [场数]")
+            return
+        player1 = await self._resolve_battletag(event, player1)
+        if not player1:
+            yield event.plain_result(self._no_bind_hint())
+            return
+        n = max(1, min(int(limit_value or 10), 40))
+        yield event.plain_result("⏳正在查询，请稍候…")
+        try:
+            await self._ensure_sameplay_runtime_ready()
+            from overstats.src.modules.dashen_sameplay.service import DashenSameplayQuery
+            query = DashenSameplayQuery(player1_bnet_id=player1, player2_bnet_id=player2, limit=n)
+            await self._ensure_query_tool_assets_ready()
+            result = await self._sameplay.query_sameplay_list(query, render=True)
+            lines = [f"同玩对局：{result.player1.display_name} & {result.player2.display_name}"]
+            lines.append(f"共找到 {result.summary.get('total_common_count', 0)} 场，返回 {len(result.matches)} 场")
+            if result.image:
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
+            else:
+                yield event.plain_result("\n".join(lines))
+        except Exception as e:
+            logger.error(f"[ow_dashen] 同玩查询失败: {e}")
+            yield event.plain_result(f"查询失败：{e}")
+
+    @ow.command("同玩详情")
+    async def ow_sameplay_detail(
+        self,
+        event: AstrMessageEvent,
+        player1_or_player2: str | None = None,
+        player2_or_number: str | int | None = None,
+        number: int | str | None = None,
+    ):
+        '''查同玩对局详情'''
+        if not self._account_features_ready() or self._sameplay is None:
+            yield event.plain_result(self._account_not_configured_hint())
+            return
+        player1, player2, index_value = self._split_sameplay_detail_args(player1_or_player2, player2_or_number, number)
+        if not player2 or index_value is None or index_value < 1:
+            yield event.plain_result("用法：/ow 同玩详情 <玩家2> <序号>，或 /ow 同玩详情 <玩家1> <玩家2> <序号>")
+            return
+        player1 = await self._resolve_battletag(event, player1)
+        if not player1:
+            yield event.plain_result(self._no_bind_hint())
+            return
+        yield event.plain_result("⏳正在查询，请稍候…")
+        try:
+            await self._ensure_sameplay_runtime_ready()
+            from overstats.src.modules.dashen_sameplay.service import DashenSameplayQuery
+            query = DashenSameplayQuery(player1_bnet_id=player1, player2_bnet_id=player2, limit=max(index_value, 10))
+            await self._ensure_query_tool_assets_ready()
+            result = await self._sameplay.query_sameplay_detail(query, index=index_value - 1, render=True)
+            await self._record_match_detail_payload(result.detail, result.match_id)
+            if result.main_image:
+                await self._save_and_send_image(event, result.main_image, f"同玩详情 (第{index_value}场)")
+            elif not any(item.image for item in result.player_details):
+                yield event.plain_result("同玩详情接口没有返回可渲染的主图或玩家英雄详情。")
+            for item in result.player_details:
+                if item.image:
+                    await self._save_and_send_image(event, item.image, f"{item.player.display_name} 英雄详细数据")
+            for note in result.notes:
+                if note:
+                    yield event.plain_result(str(note))
+        except Exception as e:
+            logger.error(f"[ow_dashen] 同玩详情查询失败: {e}")
+            yield event.plain_result(f"查询失败：{e}")
+
+    @ow.command("同玩锐评")
+    async def ow_sameplay_analyze(
+        self,
+        event: AstrMessageEvent,
+        player1_or_player2: str | None = None,
+        player2_or_number: str | int | None = None,
+        number: int | str | None = None,
+    ):
+        '''查同玩详情、全员数据与 AI 锐评'''
+        if not self._account_features_ready() or self._sameplay is None:
+            yield event.plain_result(self._account_not_configured_hint())
+            return
+        self._current_event = event
+        player1, player2, index_value = self._split_sameplay_detail_args(player1_or_player2, player2_or_number, number)
+        if not player2 or index_value is None or index_value < 1:
+            yield event.plain_result("用法：/ow 同玩锐评 <玩家2> <序号>，或 /ow 同玩锐评 <玩家1> <玩家2> <序号>")
+            return
+        player1 = await self._resolve_battletag(event, player1)
+        if not player1:
+            yield event.plain_result(self._no_bind_hint())
+            return
+        yield event.plain_result("⏳正在查询，请稍候…")
+        try:
+            await self._ensure_sameplay_runtime_ready()
+            from overstats.src.modules.dashen_sameplay.service import DashenSameplayQuery
+            query = DashenSameplayQuery(player1_bnet_id=player1, player2_bnet_id=player2, limit=max(index_value, 10))
+            enable_ai = self.config.get("analysis", {}).get("enable_ai_match_replies", True)
+            provider_id = self.config.get("analysis", {}).get("analysis_provider", "")
+            need_analyze = bool(enable_ai and provider_id)
+            await self._ensure_query_tool_assets_ready()
+            result = await self._sameplay.query_sameplay_detail_replies(
+                query,
+                index=index_value - 1,
+                show_all_heroes=True,
+                analyze=need_analyze,
+            )
+            match_id = str(getattr(result, "match_id", "") or "")
+            for reply in result.replies:
+                if reply.get("type") != "meta" or reply.get("meta_type") != "ds_sameplay_detail_record":
+                    continue
+                data = reply.get("data") if isinstance(reply.get("data"), dict) else {}
+                await self._record_match_detail_payload(data.get("detail"), match_id)
+            await self._send_reply_images(event, result.replies, send_text=need_analyze)
+        except Exception as e:
+            logger.error(f"[ow_dashen] 同玩锐评查询失败: {e}")
+            yield event.plain_result(f"查询失败：{e}")
+
     @ow.command("今日总结")
     async def ow_summary_today(self, event: AstrMessageEvent, battletag: str | None = None):
         '''查今日总结'''
@@ -899,9 +1213,13 @@ class OwDashenPlugin(Star):
     @ow.command("英雄热度")
     async def ow_hero_pick_rate_ranking(self, event: AstrMessageEvent, game_mode: str | None = None, mmr: str | None = None):
         '''查英雄选取率榜单'''
+        if self._pick_rate is None:
+            yield event.plain_result("英雄热度模块未初始化。")
+            return
         mode = self._cn_mode_to_en(game_mode or "快速")
         rank = self._cn_rank_to_en(mmr or "全部")
         try:
+            yield event.plain_result("⏳正在查询，请稍候…")
             from overstats.src.modules.ow_hero_pick_rate.service import OWHeroPickRateQuery
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_pick_rate", True)
@@ -926,9 +1244,13 @@ class OwDashenPlugin(Star):
     @ow.command("英雄曲线")
     async def ow_hero_pick_rate_history(self, event: AstrMessageEvent, hero: str, game_mode: str | None = None, mmr: str | None = None):
         '''查单英雄历史选取率曲线'''
+        if self._pick_rate is None:
+            yield event.plain_result("英雄热度模块未初始化。")
+            return
         mode = self._cn_mode_to_en(game_mode or "快速")
         rank = self._cn_rank_to_en(mmr or "全部")
         try:
+            yield event.plain_result("⏳正在查询，请稍候…")
             from overstats.src.modules.ow_hero_pick_rate.service import OWHeroPickRateQuery
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_pick_rate", True)
@@ -945,10 +1267,62 @@ class OwDashenPlugin(Star):
             logger.error(f"[ow_dashen] 英雄曲线查询失败: {e}")
             yield event.plain_result(f"查询失败：{e}")
 
+    @ow.command("威能")
+    async def ow_hero_perk(self, event: AstrMessageEvent, hero: str):
+        '''查英雄威能数据'''
+        if self._hero_perk is None:
+            yield event.plain_result("英雄威能模块未初始化。")
+            return
+        try:
+            yield event.plain_result("⏳正在查询，请稍候…")
+            from overstats.src.modules.ow_hero_perk.requests import OWHeroPerkQuery
+            await self._ensure_query_tool_assets_ready()
+            result = await self._hero_perk.query_perk(OWHeroPerkQuery(hero=hero.strip()), render=True)
+            lines = [f"英雄威能：{result.hero.hero_name}"]
+            lines.append(f"次级威能样本：{result.minor.sample_count}")
+            lines.append(f"主要威能样本：{result.major.sample_count}")
+            if result.image:
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
+            else:
+                yield event.plain_result("\n".join(lines))
+        except Exception as e:
+            logger.error(f"[ow_dashen] 英雄威能查询失败: {e}")
+            yield event.plain_result(f"查询失败：{e}")
+
+    @ow.command("英雄维基")
+    async def ow_hero_wiki(self, event: AstrMessageEvent, hero: str, question: str | None = None):
+        '''查英雄维基资料'''
+        if self._hero_wiki is None:
+            yield event.plain_result("英雄维基模块未初始化。")
+            return
+        try:
+            yield event.plain_result("⏳正在查询，请稍候…")
+            from overstats.src.modules.ow_hero_wiki.requests import OWHeroWikiQuery
+            await self._ensure_query_tool_assets_ready()
+            result = await self._hero_wiki.query_hero(
+                OWHeroWikiQuery(hero=hero.strip(), question=str(question or "").strip()),
+                render=True,
+            )
+            lines = [f"英雄维基：{result.hero_cn} ({result.hero_en})", f"职责：{result.role_cn}"]
+            if result.question:
+                lines.append(f"问题：{result.question}")
+                lines.append(f"回答：{result.answer or '当前问答不可用'}")
+            if result.image:
+                await self._save_and_send_image(event, result.image, "\n".join(lines))
+            else:
+                yield event.plain_result("\n".join(lines))
+        except Exception as e:
+            logger.error(f"[ow_dashen] 英雄维基查询失败: {e}")
+            yield event.plain_result(f"查询失败：{e}")
+
     @ow.command("商店")
     async def ow_shop(self, event: AstrMessageEvent):
         '''查守望先锋商店内容'''
+        if self._shop is None:
+            yield event.plain_result("商店模块未初始化。")
+            return
         try:
+            yield event.plain_result("⏳正在查询，请稍候…")
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_shop", True)
             result = await self._shop.query_shop(render=prefer_img)
@@ -970,8 +1344,12 @@ class OwDashenPlugin(Star):
     @ow.command("补丁")
     async def ow_patch_notes(self, event: AstrMessageEvent, patch_kind: str | None = None):
         '''查补丁说明'''
+        if self._patch_notes is None:
+            yield event.plain_result("补丁模块未初始化。")
+            return
         kind = self._cn_patch_kind_to_en(patch_kind or "最新")
         try:
+            yield event.plain_result("⏳正在查询，请稍候…")
             output_cfg = self.config.get("output", {})
             prefer_img = output_cfg.get("prefer_image_for_patch_notes", True)
             result = await self._patch_notes.query_patch_notes(patch_kind=kind, render=prefer_img)
@@ -1065,6 +1443,7 @@ class OwDashenPlugin(Star):
         cache_dirs = [
             _OVERSTATS_DATA_DIR / "cache_img",
             _OVERSTATS_DATA_DIR / "query_tool_assets" / "extra",
+            _OVERSTATS_DATA_DIR / "ow_hero_wiki",
             _OVERSTATS_DATA_DIR / "dashen_summary_runtime_cache",
             _TEMP_IMAGE_DIR,
         ]

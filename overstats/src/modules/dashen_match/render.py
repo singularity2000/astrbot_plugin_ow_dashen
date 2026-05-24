@@ -52,6 +52,8 @@ def render_match_list(
     *,
     title: str = "大神对局列表",
     full_id: str = "",
+    footer_lines: Sequence[str] | None = None,
+    hint_text: str | None = None,
 ) -> RenderedImage:
     try:
         from PIL import Image, ImageDraw, ImageFont
@@ -61,7 +63,12 @@ def render_match_list(
     config = _load_ow_config()
     recent_matches = list(matches or [])[:20]
     row_h = 60
-    footer_h = 58
+    default_hint_text = "回复此图并@机器人发送 1 / 1* / 1**，可查看单场详情 / 全员详细 / AI锐评"
+    rendered_footer_lines = [str(line).strip() for line in (footer_lines or []) if str(line).strip()]
+    effective_hint_text = default_hint_text if hint_text is None else str(hint_text or "").strip()
+    if effective_hint_text:
+        rendered_footer_lines.append(effective_hint_text)
+    footer_h = max(58, 24 + 22 * max(len(rendered_footer_lines), 1))
     img_h = row_h * max(len(recent_matches), 1) + 70 + footer_h
     img = Image.new("RGBA", (700, img_h), (22, 23, 30, 255))
     draw = ImageDraw.Draw(img, "RGBA")
@@ -93,8 +100,13 @@ def render_match_list(
 
     footer_top = img_h - footer_h
     draw.line([(20, footer_top), (680, footer_top)], fill=(60, 67, 82, 255), width=1)
-    hint_text = "回复此图并@机器人发送 1 / 1* / 1**，可查看单场详情 / 全员详细 / AI锐评"
-    draw.text((20, footer_top + 16), _fit_text(draw, hint_text, font_sm, 660), fill=(190, 198, 210), font=font_sm)
+    for line_index, line_text in enumerate(rendered_footer_lines or [default_hint_text]):
+        draw.text(
+            (20, footer_top + 16 + line_index * 22),
+            _fit_text(draw, line_text, font_sm, 660),
+            fill=(190, 198, 210),
+            font=font_sm,
+        )
 
     output = BytesIO()
     img.convert("RGB").save(output, format="PNG", optimize=True)

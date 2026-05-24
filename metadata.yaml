@@ -1,7 +1,7 @@
 name: astrbot_plugin_ow_dashen
-version: 1.1.1
+version: 1.2.0
 author: singularity2000
-desc: 守望先锋数据查询插件，基于网易大神接口，支持玩家资料、战绩、段位、强度分析、总结、英雄选取率、商店、补丁说明等
+desc: 守望先锋数据查询插件，基于网易大神接口，支持玩家资料、战绩、同玩、段位、强度分析、总结、英雄选取率、英雄威能、英雄维基、商店、补丁说明等
 display_name: 守望先锋 数据查询插件
 repo: https://github.com/singularity2000/astrbot_plugin_ow_dashen
 astrbot_version: ">=4.5.7"

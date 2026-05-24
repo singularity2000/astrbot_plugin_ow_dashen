@@ -385,6 +385,14 @@ class DashenMatchModule:
                     "competitive": bool(is_competitive_match),
                 },
             ),
+            _meta_reply(
+                "ds_match_detail_record",
+                {
+                    "match_id": detail.match_id,
+                    "match_kind": detail.match_kind,
+                    "detail": detail.payload,
+                },
+            ),
             _image_reply(main_image),
         ]
 

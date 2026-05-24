@@ -216,6 +216,62 @@ class DashenMatchRequests:
             matches = merge_unique_match_entries(matches, season_matches)
         return matches
 
+    async def fetch_history_matches_page(
+        self,
+        customer_token: str,
+        *,
+        page: int = 1,
+        season: Optional[int] = None,
+        game_modes: Sequence[str] = ("sport", "leisure"),
+        fight_modes: Sequence[str] = DEFAULT_FIGHT_MODES,
+        min_begin_ts: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        tasks = []
+        task_meta: List[tuple[str, str]] = []
+        page_num = max(1, int(page))
+
+        for game_mode in game_modes:
+            tasks.append(
+                self.api_client.query_match_list(
+                    customer_token,
+                    game_mode,
+                    page=page_num,
+                    season=season,
+                )
+            )
+            task_meta.append(("normal", str(game_mode)))
+
+        for fight_mode in fight_modes:
+            tasks.append(
+                self.api_client.fight_query_match_list(
+                    customer_token,
+                    game_mode=fight_mode,
+                    page=page_num,
+                    season=season,
+                )
+            )
+            task_meta.append(("fight", str(fight_mode)))
+
+        if not tasks:
+            return []
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        matches: List[Dict[str, Any]] = []
+        for (kind, game_mode), result in zip(task_meta, results):
+            if isinstance(result, Exception) or not isinstance(result, dict):
+                continue
+            batch_matches = self._extract_history_batch([result], min_begin_ts=min_begin_ts)
+            if not batch_matches:
+                continue
+            for match in batch_matches:
+                item = dict(match)
+                if kind == "fight":
+                    item["gameMode"] = game_mode
+                else:
+                    item.setdefault("gameMode", game_mode)
+                matches.append(item)
+        return merge_unique_match_entries([], matches)
+
     async def get_match_detail(self, customer_token: str, match: Dict[str, Any] | str) -> DashenMatchDetail:
         if isinstance(match, dict):
             source_match = dict(match)
