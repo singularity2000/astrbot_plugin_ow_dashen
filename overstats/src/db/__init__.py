@@ -17,6 +17,10 @@ from .player_identity import (
     search_identity_by_bnet_id,
     split_battletag,
 )
+try:
+    from .player_identity import PlayerIdentityRecorder
+except ImportError:
+    PlayerIdentityRecorder = None  # type: ignore[assignment]
 from .ow_hero_leaderboard import (
     HERO_LEADERBOARD_CN_TABLE,
     HERO_LEADERBOARD_GLOBAL_TABLE,
@@ -32,6 +36,7 @@ __all__ = [
     "OWHeroLeaderboardDB",
     "OW_HERO_LEADERBOARD_DB_PATH",
     "PLAYER_IDENTITY_TABLE",
+    "PlayerIdentityRecorder",
     "extract_identity_records",
     "normalize_battletag",
     "normalize_identity_record",

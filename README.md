@@ -166,9 +166,6 @@
 ├─ README.md                                 # 使用说明
 ├─ LICENSE                                   # 开源协议
 ├─ logo.png                                  # 插件图标
-├─ data/
-│  ├─ cmd_config.json                        # 文转图模板相关配置
-│  └─ t2i_templates/                         # AstrBot 文转图 HTML 模板
 └─ overstats/                                # 从 Overstats 移植来的核心逻辑
    ├─ paths.py                               # 统一管理插件独立数据目录路径
    ├─ config/                                # Overstats 配置注入与加载

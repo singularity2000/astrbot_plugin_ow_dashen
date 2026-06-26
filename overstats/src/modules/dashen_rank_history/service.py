@@ -8,11 +8,13 @@ try:
     from overstats.src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
     from overstats.src.modules.dashen_profile import get_live_dashen_season
     from overstats.src.modules.errors import ModuleError
+    from overstats.src.modules.season_config import get_dashen_history_start_season
 except ModuleNotFoundError:
     from src.client.apiclient import DashenAPIClient
     from src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
     from src.modules.dashen_profile import get_live_dashen_season
     from src.modules.errors import ModuleError
+    from src.modules.season_config import get_dashen_history_start_season
 
 from .render import HISTORY_SUBTITLE, RenderedImage, collect_missing_assets, render_rank_history
 from .requests import (
@@ -153,7 +155,7 @@ class DashenRankHistoryModule:
 
     def _resolve_season_range(self, start_season: Optional[int], end_season: Optional[int]) -> tuple[int, int]:
         live_season = int(get_live_dashen_season())
-        start = int(start_season or 15)
+        start = int(start_season or get_dashen_history_start_season())
         end = int(end_season or live_season)
         if start <= 0 or end <= 0:
             raise ModuleError(

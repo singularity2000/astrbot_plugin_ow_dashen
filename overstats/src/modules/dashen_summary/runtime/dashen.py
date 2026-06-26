@@ -9,17 +9,25 @@ try:
     from overstats.src.client.apiclient import (
         dashen_api_client,
     )
+    from overstats.src.modules.season_config import (
+        get_dashen_current_season as resolve_dashen_current_season,
+        get_dashen_season_rollover_at,
+    )
 except ModuleNotFoundError:
     from src.client.apiclient import (  # type: ignore[no-redef]
         dashen_api_client,
+    )
+    from src.modules.season_config import (
+        get_dashen_current_season as resolve_dashen_current_season,
+        get_dashen_season_rollover_at,
     )
 
 from .db import IDPoolDB
 
 
-DASHEN_SEASON_ROLLOVER_AT = dt.datetime(2026, 4, 15, 0, 0, 0)
-DASHEN_SEASON_BEFORE_ROLLOVER = 21
-DASHEN_SEASON_AFTER_ROLLOVER = 22
+DASHEN_SEASON_ROLLOVER_AT = get_dashen_season_rollover_at()
+DASHEN_SEASON_AFTER_ROLLOVER = resolve_dashen_current_season()
+DASHEN_SEASON_BEFORE_ROLLOVER = max(DASHEN_SEASON_AFTER_ROLLOVER - 1, 1)
 
 _DASHEN_SEASON_OVERRIDE: Optional[int] = None
 _OVERRIDE_RAW = str(os.getenv("OVERSTATS_DASHEN_SEASON_OVERRIDE", "") or "").strip()
@@ -57,16 +65,13 @@ def get_dashen_season_override() -> Optional[int]:
 
 
 def get_live_dashen_season(now: Optional[dt.datetime] = None) -> int:
-    now = now or dt.datetime.now()
-    if now >= DASHEN_SEASON_ROLLOVER_AT:
-        return DASHEN_SEASON_AFTER_ROLLOVER
-    return DASHEN_SEASON_BEFORE_ROLLOVER
+    return int(resolve_dashen_current_season())
 
 
 def get_current_dashen_season(now: Optional[dt.datetime] = None) -> int:
     if _DASHEN_SEASON_OVERRIDE is not None:
         return int(_DASHEN_SEASON_OVERRIDE)
-    return get_live_dashen_season(now)
+    return int(resolve_dashen_current_season())
 
 
 class _DashenSeason:

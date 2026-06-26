@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import parse_qs, urlsplit
 
 try:
+    from overstats.config import is_database_write_enabled
     from overstats.src.db.match_stats import IDPoolDB
     from overstats.src.modules.dashen_summary.runtime.stat_reference import (
         normalize_dashen_hero_stat_value,
@@ -16,6 +17,7 @@ try:
     )
     from overstats.src.modules.query_tool import read_query_tool
 except ModuleNotFoundError:
+    from config import is_database_write_enabled
     from src.db.match_stats import IDPoolDB
     from src.modules.dashen_summary.runtime.stat_reference import (
         normalize_dashen_hero_stat_value,
@@ -307,14 +309,14 @@ class MatchDetailRecorder:
         self._closed = False
 
     async def start(self) -> None:
-        if self._started:
+        if self._started or not is_database_write_enabled():
             return
         await asyncio.to_thread(self.db.initialize_match_detail_schema)
         self._worker_task = asyncio.create_task(self._worker(), name="ow-dashen-match-detail-recorder")
         self._started = True
 
     async def enqueue(self, url: str, payload: Dict[str, Any]) -> None:
-        if self._closed:
+        if self._closed or not is_database_write_enabled():
             return
         if not self._started:
             await self.start()

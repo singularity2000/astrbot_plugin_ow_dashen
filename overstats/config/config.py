@@ -3,13 +3,30 @@ from __future__ import annotations
 _INJECTED_CONFIG: dict | None = None
 
 
+def _as_bool(value: object, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def inject_config(cfg: dict) -> None:
     global _INJECTED_CONFIG
     _INJECTED_CONFIG = cfg
     
     global ANALYSIS_PERSONA_PROMPT, ENABLE_AI_MATCH_REPLIES, ENABLE_PATCH_TRANSLATION
     global ANALYSIS_BASE_URL, ANALYSIS_API_KEY
+    global ENABLE_DATABASE_WRITE, DASHEN_CURRENT_SEASON, DASHEN_HISTORY_START_SEASON, OW_HERO_LEADERBOARD_CN_SEASON
     analysis = cfg.get("analysis", {})
+    dashen_global = cfg.get("dashen_global", {})
     persona_mode = analysis.get("persona_mode", "custom")
     if persona_mode == "custom":
         ANALYSIS_PERSONA_PROMPT = str(analysis.get("custom_persona_prompt", "")).strip()
@@ -27,6 +44,13 @@ def inject_config(cfg: dict) -> None:
         ANALYSIS_BASE_URL = ""
         ANALYSIS_API_KEY = ""
 
+    ENABLE_DATABASE_WRITE = _as_bool(dashen_global.get("enable_database_write", ENABLE_DATABASE_WRITE), ENABLE_DATABASE_WRITE)
+    DASHEN_CURRENT_SEASON = int(dashen_global.get("dashen_current_season", DASHEN_CURRENT_SEASON))
+    DASHEN_HISTORY_START_SEASON = int(dashen_global.get("dashen_history_start_season", DASHEN_HISTORY_START_SEASON))
+    OW_HERO_LEADERBOARD_CN_SEASON = int(
+        dashen_global.get("ow_hero_leaderboard_cn_season", OW_HERO_LEADERBOARD_CN_SEASON)
+    )
+
 
 def _get(key: str, default: object = None) -> object:
     if _INJECTED_CONFIG is not None:
@@ -37,6 +61,7 @@ def _get(key: str, default: object = None) -> object:
 API_HOST = "127.0.0.1"
 API_PORT = 18080
 USE_STREAM_RESPONSE = True
+ENABLE_DATABASE_WRITE = True
 
 DASHEN_ACCOUNTS = _get("dashen_accounts", [])
 DASHEN_DTS = _get("dashen_global_dashen_dts", 2026)
@@ -64,7 +89,10 @@ OW_ESPORTS_PAYLOAD = {"ids": []}
 
 OW_GUESS_ASSET_ROOT = ""
 
-OW_HERO_LEADERBOARD_CN_SEASON = 2
+DASHEN_CURRENT_SEASON = 23
+DASHEN_HISTORY_START_SEASON = 15
+
+OW_HERO_LEADERBOARD_CN_SEASON = 3
 
 ANALYSIS_BASE_URL = ""
 ANALYSIS_API_KEY = ""

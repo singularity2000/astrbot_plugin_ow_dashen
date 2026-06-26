@@ -9,6 +9,11 @@ from typing import Optional
 from urllib.parse import urlsplit, urlunsplit
 
 try:
+    from overstats.config import is_database_write_enabled
+except ModuleNotFoundError:
+    from config import is_database_write_enabled
+
+try:
     from overstats.paths import ensure_dir, get_overstats_data_dir
 except ModuleNotFoundError:
     from paths import ensure_dir, get_overstats_data_dir
@@ -83,7 +88,7 @@ class RequestMetricsRecorder:
         self._closed = False
 
     async def start(self) -> None:
-        if self._started:
+        if self._started or not is_database_write_enabled():
             return
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         await asyncio.to_thread(self._initialize_database)
@@ -91,6 +96,8 @@ class RequestMetricsRecorder:
         self._started = True
 
     async def enqueue(self, url: str, source_type: str, success: bool) -> None:
+        if not is_database_write_enabled():
+            return
         normalized_url = normalize_request_metric_url(url)
         normalized_source = str(source_type or "").strip().lower()
         if not normalized_url or normalized_source not in {REQUEST_SOURCE_MODULE, REQUEST_SOURCE_UPSTREAM}:

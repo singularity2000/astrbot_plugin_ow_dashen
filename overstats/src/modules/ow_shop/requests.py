@@ -30,34 +30,34 @@ class OWShopSource:
 SHOP_SECTION_SOURCES: tuple[OWShopSource, ...] = (
     OWShopSource(
         title="\u7cbe\u9009\u5546\u54c1",
-        url="https://shop.battlenet.com.cn/api/itemshop/pages/blt01ee8af4f4da5e5f?userId=0&locale=zh-CN",
+        url="https://shop.battlenet.com.cn/api/itemshop/pages/blt01ee8af4f4da5e5f?userId=0&locale=zh-CN&mobileFlow=false",
     ),
     OWShopSource(
         title="\u7535\u7ade\u5546\u54c1",
-        url="https://shop.battlenet.com.cn/api/itemshop/pages/blt2065e08d915d3ff8?userId=0&locale=zh-CN",
+        url="https://shop.battlenet.com.cn/api/itemshop/pages/blt2065e08d915d3ff8?userId=0&locale=zh-CN&mobileFlow=false",
     ),
     OWShopSource(
         title="\u8d5b\u5b63\u7269\u54c1",
         url=(
             "https://shop.battlenet.com.cn/api/card-collection?"
             "id=blt9f0779a1ce3674d7&id=bltf6f3754ef9ac5efe&id=bltff44f3db7e349cb3"
-            "&id=blt11708b9adcddb5e2&id=blt9463b6e951095627&locale=zh-cn"
+            "&id=blt11708b9adcddb5e2&id=blt9463b6e951095627&locale=zh-cn&mobileFlow=false"
         ),
     ),
     OWShopSource(
         title="\u5149\u5b50\u6c34\u6676\u5546\u5e97",
-        url="https://shop.battlenet.com.cn/api/card-collection?id=blt96bb02f90b1c493c&id=blt41c246cabce228fe&locale=zh-cn",
+        url="https://shop.battlenet.com.cn/api/card-collection?id=blt96bb02f90b1c493c&id=blt41c246cabce228fe&locale=zh-cn&mobileFlow=false",
     ),
     OWShopSource(
         title="\u8d27\u5e01\u5546\u5e97",
         url=(
             "https://shop.battlenet.com.cn/api/card-collection?"
-            "id=blt33b65689468107fd&id=blte794697a49f1ac23&id=blt965ebe71fa46b9fb&locale=zh-cn"
+            "id=blt33b65689468107fd&id=blte794697a49f1ac23&id=blt965ebe71fa46b9fb&locale=zh-cn&mobileFlow=false"
         ),
     ),
     OWShopSource(
         title="PVE\u5546\u5e97",
-        url="https://shop.battlenet.com.cn/api/card-collection?id=blt6ba8925b6fb5d816&locale=zh-cn",
+        url="https://shop.battlenet.com.cn/api/card-collection?id=blt6ba8925b6fb5d816&locale=zh-cn&mobileFlow=false",
     ),
 )
 

@@ -20,6 +20,11 @@ logger = logging.getLogger("astrbot")
 from .requests import MANUAL_KEYS, REMOTE_HEADERS, QueryToolRequests
 
 try:
+    from overstats.src.modules.season_config import normalize_query_tool_config
+except ModuleNotFoundError:
+    from src.modules.season_config import normalize_query_tool_config
+
+try:
     from overstats.paths import ensure_dir, get_overstats_data_dir
 except ModuleNotFoundError:
     from paths import ensure_dir, get_overstats_data_dir
@@ -91,13 +96,15 @@ def read_query_tool(default: Dict[str, Any] | None = None) -> Dict[str, Any]:
     if default is None:
         default = {}
     if not QUERY_TOOL_PATH.exists():
-        return default
+        return normalize_query_tool_config(default)
     try:
         data = json.loads(QUERY_TOOL_PATH.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else default
+        if isinstance(data, dict):
+            return normalize_query_tool_config(data)
+        return normalize_query_tool_config(default)
     except Exception as exc:
         logger.debug(f"[overstats] failed to read query tool config {QUERY_TOOL_PATH}: {exc}")
-    return default
+    return normalize_query_tool_config(default)
 
 
 def write_query_tool(payload: Dict[str, Any]) -> None:
@@ -248,6 +255,8 @@ class QueryToolModule:
             for key in MANUAL_KEYS:
                 if key in local_config:
                     merged_config[key] = local_config[key]
+
+            merged_config = normalize_query_tool_config(merged_config)
 
             try:
                 write_query_tool(merged_config)

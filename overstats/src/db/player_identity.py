@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
+from pathlib import Path
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 try:
+    from overstats.config import is_database_write_enabled
     from overstats.src.db.match_stats import IDPoolDB, PLAYER_IDENTITY_TABLE
 except ModuleNotFoundError:
+    from config import is_database_write_enabled
     from src.db.match_stats import IDPoolDB, PLAYER_IDENTITY_TABLE
 
 
@@ -23,6 +27,11 @@ _BATTLETAG_KEYS = (
 )
 _BATTLENAME_KEYS = ("battlename", "battleName", "battle_name")
 _BATTLENUM_KEYS = ("battlenum", "battleNum", "battle_num")
+
+
+@dataclass(frozen=True)
+class _IdentityEvent:
+    payload: Any
 
 
 def _first_non_empty(mapping: Dict[str, Any], keys: tuple[str, ...]) -> str:
@@ -135,17 +144,85 @@ def extract_identity_records(payload: Any) -> List[Dict[str, Any]]:
 
 
 async def record_identity_records(records: List[Dict[str, Any]], *, db: Optional[IDPoolDB] = None) -> int:
-    if not records:
+    if not is_database_write_enabled() or not records:
         return 0
     identity_db = db or IDPoolDB()
     return await asyncio.to_thread(identity_db.upsert_player_identity_records, records)
 
 
 async def record_identity_payload(payload: Any, *, db: Optional[IDPoolDB] = None) -> int:
+    if not is_database_write_enabled():
+        return 0
     records = extract_identity_records(payload)
     if not records:
         return 0
     return await record_identity_records(records, db=db)
+
+
+class PlayerIdentityRecorder:
+    def __init__(self, db_path: Optional[Path] = None) -> None:
+        self.db = IDPoolDB(db_path)
+        self._queue: asyncio.Queue[Optional[_IdentityEvent]] = asyncio.Queue()
+        self._worker_task: Optional[asyncio.Task[None]] = None
+        self._started = False
+        self._closed = False
+
+    async def start(self) -> None:
+        if self._started or not is_database_write_enabled():
+            return
+        await asyncio.to_thread(self.db.initialize_player_identity_schema)
+        self._worker_task = asyncio.create_task(self._worker(), name="player-identity-recorder-worker")
+        self._started = True
+
+    async def enqueue(self, payload: Any) -> None:
+        if self._closed or not is_database_write_enabled() or payload is None:
+            return
+        if not self._started:
+            await self.start()
+        await self._queue.put(_IdentityEvent(payload))
+
+    async def close(self) -> None:
+        if not self._started or self._closed:
+            return
+        self._closed = True
+        await self._queue.join()
+        await self._queue.put(None)
+        if self._worker_task is not None:
+            await self._worker_task
+        self._worker_task = None
+
+    async def _worker(self) -> None:
+        while True:
+            event = await self._queue.get()
+            if event is None:
+                self._queue.task_done()
+                return
+            batch = [event]
+            while True:
+                try:
+                    extra = self._queue.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if extra is None:
+                    await self._queue.put(None)
+                    break
+                batch.append(extra)
+            try:
+                await asyncio.to_thread(self._write_batch, batch)
+            finally:
+                for _ in batch:
+                    self._queue.task_done()
+
+    def _write_batch(self, batch: Sequence[_IdentityEvent]) -> int:
+        merged_records: Dict[str, Dict[str, Any]] = {}
+        for event in batch or []:
+            for record in extract_identity_records(event.payload):
+                bnetid = str(record.get("bnetid") or "").strip()
+                if bnetid:
+                    merged_records[bnetid] = record
+        if not merged_records:
+            return 0
+        return self.db.upsert_player_identity_records(list(merged_records.values()))
 
 
 async def search_identity_by_bnet_id(
@@ -169,6 +246,7 @@ async def search_identity_by_bnet_id(
 
 __all__ = [
     "PLAYER_IDENTITY_TABLE",
+    "PlayerIdentityRecorder",
     "extract_identity_records",
     "normalize_battletag",
     "normalize_identity_record",

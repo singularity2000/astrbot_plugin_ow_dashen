@@ -69,6 +69,7 @@ class OwDashenPlugin(Star):
         self._hero_perk = None
         self._hero_wiki = None
         self._match_detail_recorder = None
+        self._player_identity_recorder = None
 
     def _account_features_ready(self) -> bool:
         return self._api_client is not None and self._bnet_search is not None
@@ -119,11 +120,28 @@ class OwDashenPlugin(Star):
         self._match_detail_recorder = MatchDetailRecorder()
 
         try:
+            from overstats.src.db.player_identity import PlayerIdentityRecorder
+        except ImportError as e:
+            logger.warning(f"[ow_dashen] player identity async recorder unavailable, falling back to direct writes: {e}")
+            self._player_identity_recorder = None
+        else:
+            self._player_identity_recorder = PlayerIdentityRecorder()
+
+        try:
             from overstats.config.loader import get_dashen_client_config
             client_config = get_dashen_client_config()
 
             from overstats.src.client.apiclient import init_dashen_api_client
-            self._api_client = init_dashen_api_client(client_config)
+            try:
+                self._api_client = init_dashen_api_client(
+                    client_config,
+                    player_identity_recorder=self._player_identity_recorder,
+                )
+            except TypeError as e:
+                if "player_identity_recorder" not in str(e):
+                    raise
+                logger.warning("[ow_dashen] cached old API client initializer detected, falling back without async identity recorder")
+                self._api_client = init_dashen_api_client(client_config)
 
             from overstats.src.modules.bnet_search.service import BnetSearchModule
             self._bnet_search = BnetSearchModule(self._api_client)
@@ -322,6 +340,11 @@ class OwDashenPlugin(Star):
         logger.info("[ow_dashen] 插件初始化完成，所有模块已加载")
 
     async def terminate(self) -> None:
+        if self._player_identity_recorder is not None:
+            try:
+                await self._player_identity_recorder.close()
+            except Exception as e:
+                logger.warning(f"[ow_dashen] failed to close player identity recorder: {e}")
         if self._match_detail_recorder is not None:
             try:
                 await self._match_detail_recorder.close()

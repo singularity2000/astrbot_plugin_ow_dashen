@@ -14,6 +14,21 @@ def _read_bool_env(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _as_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on"}:
+        return True
+    if text in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def _read_int_env(name: str, default: int) -> int:
     raw = os.getenv(name)
     if raw is None:
@@ -68,6 +83,7 @@ class APIConfig:
     host: str
     port: int
     use_stream_response: bool
+    enable_database_write: bool
     dashen_max_concurrent_requests: int
     dashen_max_accepted_requests: int = 4
 
@@ -168,6 +184,19 @@ def _default_dashen_max_accepted_requests() -> int:
     return max(1, enabled_count * 4)
 
 
+def is_database_write_enabled() -> bool:
+    injected = config._INJECTED_CONFIG or {}
+    injected_global = injected.get("dashen_global", {})
+    default_value = _as_bool(
+        injected_global.get(
+            "enable_database_write",
+            getattr(config, "ENABLE_DATABASE_WRITE", True),
+        ),
+        True,
+    )
+    return _read_bool_env("OVERSTATS_ENABLE_DATABASE_WRITE", default_value)
+
+
 def get_api_config() -> APIConfig:
     injected = config._INJECTED_CONFIG or {}
     injected_global = injected.get("dashen_global", {})
@@ -178,6 +207,7 @@ def get_api_config() -> APIConfig:
             "OVERSTATS_USE_STREAM_RESPONSE",
             config.USE_STREAM_RESPONSE,
         ),
+        enable_database_write=is_database_write_enabled(),
         dashen_max_concurrent_requests=_read_int_env(
             "OVERSTATS_DASHEN_MAX_CONCURRENT_REQUESTS",
             injected_global.get("max_concurrent_requests", getattr(config, "DASHEN_MAX_CONCURRENT_REQUESTS", 2)),

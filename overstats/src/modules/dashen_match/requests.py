@@ -7,13 +7,15 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 try:
     from overstats.src.client.apiclient import DashenAPIClient, dashen_api_client
+    from overstats.src.modules.season_config import get_dashen_current_season, get_dashen_season_rollover_at
 except ModuleNotFoundError:
     from src.client.apiclient import DashenAPIClient, dashen_api_client
+    from src.modules.season_config import get_dashen_current_season, get_dashen_season_rollover_at
 
 
-DASHEN_SEASON_ROLLOVER_AT = dt.datetime(2026, 4, 15, 0, 0, 0)
-DASHEN_SEASON_BEFORE_ROLLOVER = 21
-DASHEN_SEASON_AFTER_ROLLOVER = 22
+DASHEN_SEASON_ROLLOVER_AT = get_dashen_season_rollover_at()
+DASHEN_SEASON_AFTER_ROLLOVER = get_dashen_current_season()
+DASHEN_SEASON_BEFORE_ROLLOVER = max(DASHEN_SEASON_AFTER_ROLLOVER - 1, 1)
 DEFAULT_FIGHT_MODES = ("QuickFight", "LeisureFight", "SportFight")
 
 
@@ -37,8 +39,7 @@ class DashenMatchDetail:
 
 
 def get_live_dashen_season(now: Optional[dt.datetime] = None) -> int:
-    now = now or dt.datetime.now()
-    return DASHEN_SEASON_AFTER_ROLLOVER if now >= DASHEN_SEASON_ROLLOVER_AT else DASHEN_SEASON_BEFORE_ROLLOVER
+    return int(get_dashen_current_season())
 
 
 def get_recent_dashen_seasons(current_season: Optional[int] = None, include_previous: bool = True) -> List[int]:

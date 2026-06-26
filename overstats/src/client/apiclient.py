@@ -13,13 +13,19 @@ import tempfile
 import threading
 import time
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple, TYPE_CHECKING
+from urllib.parse import quote
 
 import httpx
 
 logger = logging.getLogger("astrbot")
 
 try:
-    from overstats.config import DashenClientConfig, DashenCredentialConfig, get_dashen_client_config
+    from overstats.config import (
+        DashenClientConfig,
+        DashenCredentialConfig,
+        get_dashen_client_config,
+        is_database_write_enabled,
+    )
     from overstats.config import config as overstats_config
     from overstats.paths import ensure_dir, get_overstats_data_dir
     from overstats.src.db.player_identity import record_identity_payload
@@ -27,7 +33,12 @@ try:
 except ModuleNotFoundError:
     try:
         from config import config as overstats_config
-        from config.loader import DashenClientConfig, DashenCredentialConfig, get_dashen_client_config
+        from config.loader import (
+            DashenClientConfig,
+            DashenCredentialConfig,
+            get_dashen_client_config,
+            is_database_write_enabled,
+        )
         from paths import ensure_dir, get_overstats_data_dir
         from src.db.player_identity import record_identity_payload
         from src.db.request_metrics import normalize_request_metric_url
@@ -42,6 +53,9 @@ except ModuleNotFoundError:
         def get_dashen_client_config() -> Any:
             raise RuntimeError("Dashen client config loader is unavailable.")
 
+        def is_database_write_enabled() -> bool:
+            return True
+
         def get_overstats_data_dir() -> Path:
             return Path.cwd()
 
@@ -51,8 +65,12 @@ except ModuleNotFoundError:
 
 if TYPE_CHECKING:
     try:
+        from overstats.src.db.match_detail_recorder import MatchDetailRecorder
+        from overstats.src.db.player_identity import PlayerIdentityRecorder
         from overstats.src.db.request_metrics import RequestMetricsRecorder
     except ModuleNotFoundError:
+        from src.db.match_detail_recorder import MatchDetailRecorder
+        from src.db.player_identity import PlayerIdentityRecorder
         from src.db.request_metrics import RequestMetricsRecorder
 
 
@@ -70,6 +88,8 @@ DASHEN_API_ROOT = "https://datamsapi.ds.163.com/v1/a19ld5tool"
 DASHEN_CUSTOMER_API_BASE = f"{DASHEN_API_ROOT}/customer"
 DASHEN_BILLBOARD_API_BASE = f"{DASHEN_API_ROOT}/billboard"
 DATAMSAPI_HOST = httpx.URL(DASHEN_API_ROOT).host or "datamsapi.ds.163.com"
+BLIZZARD_HOST = "https://overwatch.blizzard.com"
+DEFAULT_BLIZZARD_LOCALE = "zh-tw"
 
 SEARCH_BNET_ACCOUNT_URL = "https://datamsapi.ds.163.com/v1/a19ld5tool/searchBnetAccount"
 SEARCH_BNET_ACCOUNT_TIMEOUT = httpx.Timeout(6.0, connect=2.5, read=4.0, write=4.0, pool=2.0)
@@ -830,6 +850,8 @@ class DashenAPIClient:
         *,
         client_config: Optional[DashenClientConfig] = None,
         credential_pool: Optional[DashenCredentialPool] = None,
+        match_detail_recorder: Optional["MatchDetailRecorder"] = None,
+        player_identity_recorder: Optional["PlayerIdentityRecorder"] = None,
         request_metrics_recorder: Optional["RequestMetricsRecorder"] = None,
         dts: Optional[int] = None,
         role_id: Optional[int] = None,
@@ -839,6 +861,8 @@ class DashenAPIClient:
         if client_config is not None:
             _apply_client_config(client_config)
         self.client_config = client_config or CLIENT_CONFIG
+        self.match_detail_recorder = match_detail_recorder
+        self.player_identity_recorder = player_identity_recorder
         self.request_metrics_recorder = request_metrics_recorder
         self.netease_client = netease_client or _build_default_netease_client()
         self.proxy_client = proxy_client or SafeClient(
@@ -871,6 +895,8 @@ class DashenAPIClient:
         return self.credential_pool.next_credential()
 
     async def _record_upstream_metric(self, url: str, success: bool) -> None:
+        if not is_database_write_enabled():
+            return
         recorder = self.request_metrics_recorder
         if recorder is None:
             return
@@ -880,16 +906,46 @@ class DashenAPIClient:
             logger.debug(f"[overstats] failed to record upstream request metric url={url}: {exc}")
 
     async def _record_player_identity_payload(self, url: str, payload: Any) -> None:
+        if not is_database_write_enabled():
+            return
         try:
             host = (httpx.URL(url).host or "").lower()
         except Exception:
             host = ""
         if host != DATAMSAPI_HOST:
             return
+        recorder = self.player_identity_recorder
+        if recorder is not None:
+            try:
+                await recorder.enqueue(payload)
+            except Exception as exc:
+                logger.debug(f"[overstats] failed to enqueue player identity url={url}: {exc}")
+            return
         try:
             await record_identity_payload(payload)
         except Exception as exc:
             logger.debug(f"[overstats] failed to record player identity url={url}: {exc}")
+
+    async def _record_match_detail_payload(self, url: str, payload: Any) -> None:
+        if not is_database_write_enabled():
+            return
+        recorder = self.match_detail_recorder
+        if recorder is None or not isinstance(payload, dict):
+            return
+        try:
+            parsed_url = httpx.URL(str(url or ""))
+        except Exception:
+            return
+        path = str(parsed_url.path or "").rstrip("/")
+        host = (parsed_url.host or "").lower()
+        if host != DATAMSAPI_HOST or path != "/v1/a19ld5tool/customer/queryMatchInfo":
+            return
+        if payload.get("code") != 0 or not isinstance(payload.get("data"), dict):
+            return
+        try:
+            await recorder.enqueue(str(url or ""), payload)
+        except Exception as exc:
+            logger.debug(f"[overstats] failed to record match detail url={url}: {exc}")
 
     async def request_json(
         self,
@@ -901,6 +957,28 @@ class DashenAPIClient:
         auth_dts_override: Optional[int] = None,
         **kwargs: Any,
     ) -> Dict[str, Any]:
+        payload = await self.request_payload(
+            method,
+            url,
+            use_proxy=use_proxy,
+            credential=credential,
+            auth_dts_override=auth_dts_override,
+            **kwargs,
+        )
+        if not isinstance(payload, dict):
+            raise TypeError(f"Expected JSON object response from {url}, got {type(payload).__name__}")
+        return payload
+
+    async def request_payload(
+        self,
+        method: str,
+        url: str,
+        *,
+        use_proxy: bool = False,
+        credential: Optional[DashenCredential] = None,
+        auth_dts_override: Optional[int] = None,
+        **kwargs: Any,
+    ) -> Any:
         client = self.proxy_client if use_proxy else self.netease_client
         request_kwargs = dict(kwargs)
         metric_url = _metric_url_for_request(url, request_kwargs.get("params"))
@@ -944,6 +1022,7 @@ class DashenAPIClient:
         await self._record_upstream_metric(request_url, upstream_success)
         if upstream_success:
             await self._record_player_identity_payload(request_url, payload)
+            await self._record_match_detail_payload(request_url, payload)
         return payload
 
     async def request_bytes(self, url: str, *, use_proxy: bool = False, **kwargs: Any) -> bytes:
@@ -972,6 +1051,24 @@ class DashenAPIClient:
             credential=credential,
             json=payload,
             timeout=SEARCH_BNET_ACCOUNT_TIMEOUT,
+        )
+
+    async def search_blizzard_accounts(
+        self,
+        name: str,
+        *,
+        locale: str = DEFAULT_BLIZZARD_LOCALE,
+    ) -> Any:
+        normalized_name = str(name or "").replace("#", "-").replace("\uff03", "-").strip()
+        search_name = normalized_name.split("-", 1)[0].strip()
+        normalized_locale = str(locale or DEFAULT_BLIZZARD_LOCALE).strip().lower().replace("_", "-")
+        encoded_name = quote(search_name, safe="")
+        url = f"{BLIZZARD_HOST}/{normalized_locale}/search/account-by-name/{encoded_name}/"
+        return await self.request_payload(
+            "GET",
+            url,
+            use_proxy=True,
+            headers={"Accept": "application/json"},
         )
 
     async def query_card(self, customer_token: str) -> Dict[str, Any]:
@@ -1230,15 +1327,32 @@ http_client: Optional[SafeClient] = None
 http_client_with_proxy: Optional[SafeClient] = None
 
 
-def init_dashen_api_client(client_config: Optional[DashenClientConfig] = None) -> DashenAPIClient:
+def init_dashen_api_client(
+    client_config: Optional[DashenClientConfig] = None,
+    *,
+    match_detail_recorder: Optional["MatchDetailRecorder"] = None,
+    player_identity_recorder: Optional["PlayerIdentityRecorder"] = None,
+    request_metrics_recorder: Optional["RequestMetricsRecorder"] = None,
+) -> DashenAPIClient:
     global dashen_api_client, http_client, http_client_with_proxy
-    if dashen_api_client is not None and client_config is None:
+    if (
+        dashen_api_client is not None
+        and client_config is None
+        and match_detail_recorder is None
+        and player_identity_recorder is None
+        and request_metrics_recorder is None
+    ):
         return dashen_api_client
     if dashen_api_client is not None:
         raise RuntimeError("Dashen API client is already initialized. Close it before reinitializing.")
     if client_config is not None:
         _apply_client_config(client_config)
-    dashen_api_client = DashenAPIClient(client_config=client_config)
+    dashen_api_client = DashenAPIClient(
+        client_config=client_config,
+        match_detail_recorder=match_detail_recorder,
+        player_identity_recorder=player_identity_recorder,
+        request_metrics_recorder=request_metrics_recorder,
+    )
     http_client = dashen_api_client.netease_client
     http_client_with_proxy = dashen_api_client.proxy_client
     return dashen_api_client
