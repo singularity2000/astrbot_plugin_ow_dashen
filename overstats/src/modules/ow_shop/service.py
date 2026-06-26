@@ -11,8 +11,10 @@ import time
 from typing import Any, Callable, Dict, Optional, Sequence
 
 try:
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.errors import ModuleError
 except ModuleNotFoundError:
+    from src.modules.async_utils import run_blocking
     from src.modules.errors import ModuleError
 
 from .render import RenderedImage, render_ow_shop
@@ -59,11 +61,11 @@ class OWShopModule:
         self.image_asset_dir = self.cache_root / "images"
 
     async def query_shop(self, *, render: bool = False) -> OWShopOutput:
-        snapshot = self._load_cached_snapshot()
+        snapshot = await run_blocking(self._load_cached_snapshot)
         if snapshot is None:
             snapshot = await self._refresh_snapshot()
-            self._write_json_atomic(self.data_cache_path, snapshot)
-            self._delete_stale_render_cache()
+            await run_blocking(self._write_json_atomic, self.data_cache_path, snapshot)
+            await run_blocking(self._delete_stale_render_cache)
 
         output = OWShopOutput(
             generated_at=str(snapshot.get("generated_at") or self._format_generated_at(self.time_provider())),
@@ -78,7 +80,7 @@ class OWShopModule:
         if not render:
             return output
 
-        cached_image = self._load_cached_render()
+        cached_image = await run_blocking(self._load_cached_render)
         if cached_image is not None:
             return OWShopOutput(
                 generated_at=output.generated_at,
@@ -88,7 +90,7 @@ class OWShopModule:
             )
 
         rendered = await self._render_sections(output.sections, output.generated_at)
-        self._write_bytes_atomic(self.image_cache_path, rendered.content)
+        await run_blocking(self._write_bytes_atomic, self.image_cache_path, rendered.content)
         return OWShopOutput(
             generated_at=output.generated_at,
             cache_ttl_seconds=output.cache_ttl_seconds,
@@ -136,7 +138,12 @@ class OWShopModule:
         ]
         asset_paths = await self.requests.cache_images(image_urls, self.image_asset_dir)
         try:
-            return self.renderer(sections=sections, generated_at=generated_at, asset_paths=asset_paths)
+            return await run_blocking(
+                self.renderer,
+                sections=sections,
+                generated_at=generated_at,
+                asset_paths=asset_paths,
+            )
         except RuntimeError as exc:
             raise ModuleError(
                 error="render_dependency_missing",

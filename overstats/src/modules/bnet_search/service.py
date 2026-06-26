@@ -4,8 +4,10 @@ from dataclasses import dataclass
 from typing import Optional
 
 try:
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.client.apiclient import DashenAPIClient
 except ModuleNotFoundError:
+    from src.modules.async_utils import run_blocking
     from src.client.apiclient import DashenAPIClient
 
 from .render import RenderedImage, render_bnet_search_result
@@ -24,7 +26,7 @@ class BnetSearchModule:
 
     async def search(self, bnet_id: str, *, render: bool = False) -> BnetSearchOutput:
         result = await self.requests.search(bnet_id)
-        image = render_bnet_search_result(result) if render else None
+        image = await run_blocking(render_bnet_search_result, result) if render else None
         return BnetSearchOutput(result=result, image=image)
 
     async def resolve_customer_token(self, bnet_id: str) -> str:

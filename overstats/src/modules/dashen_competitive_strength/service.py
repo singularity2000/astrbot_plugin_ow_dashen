@@ -5,6 +5,7 @@ from typing import Any, Dict, Optional, Sequence
 
 try:
     from overstats.src.client.apiclient import DashenAPIClient
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
     from overstats.src.modules.errors import ModuleError
     from overstats.src.modules.query_tool import load_query_tool
@@ -15,6 +16,7 @@ try:
     )
 except ModuleNotFoundError:
     from src.client.apiclient import DashenAPIClient
+    from src.modules.async_utils import run_blocking
     from src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
     from src.modules.errors import ModuleError
     from src.modules.query_tool import load_query_tool
@@ -110,7 +112,7 @@ class DashenCompetitiveStrengthModule:
         render: bool = False,
     ) -> DashenCompetitiveStrengthOutput:
         query, resolved_bnet = await self._resolve_query(query)
-        config = self._load_ow_config()
+        config = await run_blocking(self._load_ow_config)
         computed = await self.engine.build(
             customer_token=query.customer_token,
             limit=normalize_limit(query.limit),
@@ -163,7 +165,8 @@ class DashenCompetitiveStrengthModule:
         if render:
             avatar_bytes = await self._try_fetch_avatar_bytes(resolved_bnet, query.customer_token)
             try:
-                image = render_quick_strength(
+                image = await run_blocking(
+                    render_quick_strength,
                     player_name=full_id,
                     bnet_id=bnet_id,
                     summary=summary.to_dict(),

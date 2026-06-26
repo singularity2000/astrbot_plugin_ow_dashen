@@ -10,10 +10,12 @@ from typing import Any, Callable, Dict, Iterable, Mapping, Optional, Sequence
 
 try:
     from overstats.src.constants import CHARA_NAME, iter_hero_alias_pairs
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.errors import ModuleError
     from overstats.src.modules.query_tool import load_query_tool
 except ModuleNotFoundError:
     from src.constants import CHARA_NAME, iter_hero_alias_pairs
+    from src.modules.async_utils import run_blocking
     from src.modules.errors import ModuleError
     from src.modules.query_tool import load_query_tool
 
@@ -305,7 +307,7 @@ class OWHeroWikiModule:
         render: bool = False,
     ) -> OWHeroWikiOutput:
         resolved_query = self._normalize_query(query)
-        config = self._load_ow_config()
+        config = await run_blocking(self._load_ow_config)
         hero_context = self._resolve_hero_context(resolved_query.hero, config)
         if hero_context is None:
             raise ModuleError(
@@ -352,15 +354,16 @@ class OWHeroWikiModule:
             return output
 
         render_cache_key = self._build_render_cache_key(output, structured_payload=structured_payload)
-        cached_image = self._load_rendered_image(render_cache_key)
+        cached_image = await run_blocking(self._load_rendered_image, render_cache_key)
         if cached_image is None:
-            image = render_hero_wiki_overview(
+            image = await run_blocking(
+                render_hero_wiki_overview,
                 output.to_dict(),
                 accent_color=output.accent_color,
                 icon_url=output.icon_url,
                 image_url=output.image_url,
             )
-            self._store_rendered_image(render_cache_key, image.content)
+            await run_blocking(self._store_rendered_image, render_cache_key, image.content)
         else:
             image = RenderedImage(content=cached_image)
         return OWHeroWikiOutput(

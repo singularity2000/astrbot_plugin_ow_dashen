@@ -18,8 +18,10 @@ import httpx
 
 try:
     from overstats.config import config as app_config
+    from overstats.src.modules.async_utils import run_blocking
 except ModuleNotFoundError:
     from config import config as app_config
+    from src.modules.async_utils import run_blocking
 
 from ...constants.chara import iter_hero_alias_pairs
 
@@ -296,6 +298,19 @@ def is_valid_image_file(path: Path) -> bool:
         return True
     except Exception:
         return False
+
+
+def _write_image_atomic(target_path: Path, content: bytes, suffix: str, asset_dir: Path) -> None:
+    fd, temp_path = tempfile.mkstemp(prefix="patch-notes-image.", suffix=suffix, dir=str(asset_dir))
+    try:
+        with os.fdopen(fd, "wb") as file:
+            file.write(content)
+        Path(temp_path).replace(target_path)
+    finally:
+        try:
+            Path(temp_path).unlink(missing_ok=True)
+        except OSError:
+            pass
 
 
 def _iter_recent_months(now_date: Optional[dt.date] = None, limit: int = SCAN_LIMIT):
@@ -1017,7 +1032,7 @@ class PatchNotesRequests:
         suffix = Path(parsed.path or "").suffix.lower() or ".png"
         filename = f"{stable_url_hash(normalized)}{suffix}"
         target_path = asset_dir / filename
-        if target_path.exists() and is_valid_image_file(target_path):
+        if target_path.exists() and await run_blocking(is_valid_image_file, target_path):
             return target_path
 
         response = await client.get(normalized)
@@ -1026,14 +1041,5 @@ class PatchNotesRequests:
         if not content:
             return None
 
-        fd, temp_path = tempfile.mkstemp(prefix="patch-notes-image.", suffix=suffix, dir=str(asset_dir))
-        try:
-            with os.fdopen(fd, "wb") as file:
-                file.write(content)
-            Path(temp_path).replace(target_path)
-        finally:
-            try:
-                Path(temp_path).unlink(missing_ok=True)
-            except OSError:
-                pass
+        await run_blocking(_write_image_atomic, target_path, content, suffix, asset_dir)
         return target_path

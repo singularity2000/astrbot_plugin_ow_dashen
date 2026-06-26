@@ -10,8 +10,10 @@ import time
 from typing import Any, Callable, Dict, Mapping, Optional
 
 try:
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.errors import ModuleError
 except ModuleNotFoundError:
+    from src.modules.async_utils import run_blocking
     from src.modules.errors import ModuleError
 
 from .render import RenderedImage, render_patch_fallback, render_patch_notes
@@ -114,7 +116,7 @@ class PatchNotesModule:
         cache_key = build_patch_cache_key(selected_patch)
 
         if chosen_source == "en":
-            cached_bundle = self._load_cached_patch_bundle(cache_key)
+            cached_bundle = await run_blocking(self._load_cached_patch_bundle, cache_key)
             if cached_bundle is not None:
                 cached_candidate = cached_bundle.get("candidate")
                 if isinstance(cached_candidate, dict):
@@ -157,7 +159,14 @@ class PatchNotesModule:
 
         image = await self._render_candidate(output.selected, output.summary)
         if chosen_source == "en" and translated and image is not None:
-            self._save_cached_patch_bundle(cache_key, output.selected, output.summary, image.content, translated=True)
+            await run_blocking(
+                self._save_cached_patch_bundle,
+                cache_key,
+                output.selected,
+                output.summary,
+                image.content,
+                translated=True,
+            )
 
         return PatchNotesOutput(
             requested_kind=output.requested_kind,
@@ -175,14 +184,19 @@ class PatchNotesModule:
         use_proxy = str(candidate.get("source") or "") == "en"
         try:
             asset_paths = await self.requests.cache_images(self._collect_asset_urls(candidate), self.asset_dir, use_proxy=use_proxy)
-            return self.renderer(candidate, summary_text=summary_text, asset_paths=asset_paths)
+            return await run_blocking(
+                self.renderer,
+                candidate,
+                summary_text=summary_text,
+                asset_paths=asset_paths,
+            )
         except RuntimeError as exc:
             print(f"[overstats] patch_notes structured render unavailable: {type(exc).__name__}: {exc}")
         except Exception as exc:
             print(f"[overstats] patch_notes structured render failed: {type(exc).__name__}: {exc}")
 
         try:
-            return self.fallback_renderer(candidate, summary_text=summary_text)
+            return await run_blocking(self.fallback_renderer, candidate, summary_text=summary_text)
         except RuntimeError as exc:
             raise ModuleError(
                 error="render_dependency_missing",

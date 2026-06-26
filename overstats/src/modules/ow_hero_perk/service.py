@@ -8,11 +8,13 @@ from typing import Any, Callable, Dict, Iterable, Optional, Sequence
 try:
     from overstats.src.constants import iter_hero_alias_pairs
     from overstats.src.db import IDPoolDB
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.errors import ModuleError
     from overstats.src.modules.query_tool import load_query_tool
 except ModuleNotFoundError:
     from src.constants import iter_hero_alias_pairs
     from src.db import IDPoolDB
+    from src.modules.async_utils import run_blocking
     from src.modules.errors import ModuleError
     from src.modules.query_tool import load_query_tool
 
@@ -123,7 +125,7 @@ class OWHeroPerkModule:
         render: bool = False,
     ) -> OWHeroPerkOutput:
         resolved_query = self._normalize_query(query)
-        config = self._load_ow_config()
+        config = await run_blocking(self._load_ow_config)
         hero_lookup = self._build_hero_lookup(config)
         hero_meta = self._resolve_hero_meta(resolved_query.hero, hero_lookup)
         if hero_meta is None:
@@ -135,8 +137,8 @@ class OWHeroPerkModule:
             )
 
         perk_context = self._build_perk_context(config)
-        minor_bucket = self._query_bucket(hero_meta, MINOR_PERK_LEVEL, perk_context)
-        major_bucket = self._query_bucket(hero_meta, MAJOR_PERK_LEVEL, perk_context)
+        minor_bucket = await run_blocking(self._query_bucket, hero_meta, MINOR_PERK_LEVEL, perk_context)
+        major_bucket = await run_blocking(self._query_bucket, hero_meta, MAJOR_PERK_LEVEL, perk_context)
         if not minor_bucket.perks and not major_bucket.perks:
             raise ModuleError(
                 error="hero_perk_empty",
@@ -153,7 +155,8 @@ class OWHeroPerkModule:
         if not render:
             return output
 
-        image = render_hero_perk_overview(
+        image = await run_blocking(
+            render_hero_perk_overview,
             hero=output.hero.to_dict(),
             minor=output.minor.to_dict(),
             major=output.major.to_dict(),

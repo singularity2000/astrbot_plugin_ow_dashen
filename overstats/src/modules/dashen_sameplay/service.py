@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
 
 try:
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.dashen_match import DashenMatchQuery, DashenMatchRequests, dashen_match_module
     from overstats.src.modules.dashen_match.enhanced_render import (
         build_target_hero_icons,
@@ -29,6 +30,7 @@ try:
     from overstats.src.modules.dashen_match.requests import get_recent_dashen_seasons, iter_dashen_season_request_values
     from overstats.src.modules.errors import ModuleError
 except ModuleNotFoundError:
+    from src.modules.async_utils import run_blocking
     from src.modules.dashen_match import DashenMatchQuery, DashenMatchRequests, dashen_match_module
     from src.modules.dashen_match.enhanced_render import (
         build_target_hero_icons,
@@ -256,7 +258,8 @@ class DashenSameplayModule:
         summary["returned_count"] = len(visible_matches)
         image = None
         if render:
-            image = render_match_list(
+            image = await run_blocking(
+                render_match_list,
                 visible_matches,
                 title=f"{player1.display_name} & {player2.display_name} 同玩对局",
                 footer_lines=[self._build_list_footer(summary, scan_complete=bool(common_output.get("scan_complete")))],
@@ -328,13 +331,15 @@ class DashenSameplayModule:
 
         main_image = None
         if render and self._is_renderable_match_detail(detail.payload):
-            main_image = render_match_detail(
+            main_image = await run_blocking(
+                render_match_detail,
                 detail.payload,
                 source_match=source_match,
                 query_full_id=player1.full_id,
                 query_bnet_id=player1.bnet_id,
             )
-            main_image = decorate_rendered_image_header(
+            main_image = await run_blocking(
+                decorate_rendered_image_header,
                 main_image,
                 player1.display_name,
                 bnet_id=player1.bnet_id,
@@ -360,11 +365,13 @@ class DashenSameplayModule:
                 query_bnet_id=focus_player.bnet_id,
             )
             if all_player_details:
-                waterfall_image = render_all_players_waterfall(
+                waterfall_image = await run_blocking(
+                    render_all_players_waterfall,
                     all_player_details,
                     match_game_time_sec=detail_root.get("gameTimeSec"),
                 )
-                waterfall_image = decorate_rendered_image_header(
+                waterfall_image = await run_blocking(
+                    decorate_rendered_image_header,
                     waterfall_image,
                     focus_player.display_name,
                     bnet_id=focus_player.bnet_id,
@@ -387,7 +394,8 @@ class DashenSameplayModule:
                             ),
                             {},
                         )
-                        analysis_image = render_analysis_report(
+                        analysis_image = await run_blocking(
+                            render_analysis_report,
                             json_data,
                             target_hero_images=build_target_hero_icons(focus_detail.get("heroList") or [], size=40),
                             map_name=map_name_for_match(detail_root),
@@ -865,12 +873,14 @@ class DashenSameplayModule:
 
         image = None
         if render:
-            image = render_player_hero_detail(
+            image = await run_blocking(
+                render_player_hero_detail,
                 player.display_name,
                 focus_detail,
                 match_game_time_sec=detail_root.get("gameTimeSec"),
             )
-            image = decorate_rendered_image_header(
+            image = await run_blocking(
+                decorate_rendered_image_header,
                 image,
                 player.display_name,
                 bnet_id=player.bnet_id,

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 
 try:
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.constants.chara import CHARA_NAME, iter_hero_alias_pairs
     from overstats.src.db import HERO_LEADERBOARD_CN_TABLE, OWHeroLeaderboardDB
     from overstats.src.modules.errors import ModuleError
@@ -13,6 +14,7 @@ try:
         QUICK_STRENGTH_THEME,
     )
 except ModuleNotFoundError:
+    from src.modules.async_utils import run_blocking
     from src.constants.chara import CHARA_NAME, iter_hero_alias_pairs
     from src.db import HERO_LEADERBOARD_CN_TABLE, OWHeroLeaderboardDB
     from src.modules.errors import ModuleError
@@ -169,12 +171,13 @@ class OWHeroPickRateModule:
         render: bool = False,
     ) -> OWHeroPickRateOutput:
         resolved_query = self._normalize_query(query)
-        config = self._load_ow_config()
+        config = await run_blocking(self._load_ow_config)
         if resolved_query.view == VIEW_RANKING:
-            output = self._query_ranking(resolved_query, config)
+            output = await run_blocking(self._query_ranking, resolved_query, config)
             if render:
                 theme = self._theme_for_game_mode(resolved_query.game_mode)
-                image = render_pick_rate_ranking(
+                image = await run_blocking(
+                    render_pick_rate_ranking,
                     game_mode=resolved_query.game_mode,
                     mmr=resolved_query.mmr,
                     snapshot=output.snapshot.to_dict() if output.snapshot else {},
@@ -192,10 +195,11 @@ class OWHeroPickRateModule:
                 )
             return output
 
-        output = self._query_history(resolved_query, config)
+        output = await run_blocking(self._query_history, resolved_query, config)
         if render:
             theme = self._theme_for_game_mode(resolved_query.game_mode)
-            image = render_pick_rate_history(
+            image = await run_blocking(
+                render_pick_rate_history,
                 game_mode=resolved_query.game_mode,
                 mmr=resolved_query.mmr,
                 hero=output.hero.to_dict() if output.hero else {},

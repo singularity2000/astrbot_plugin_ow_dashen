@@ -19,6 +19,7 @@ if _PLUGIN_ROOT_STR not in sys.path:
     sys.path.insert(0, _PLUGIN_ROOT_STR)
 
 from overstats.paths import get_overstats_data_dir, get_plugin_data_dir
+from overstats.src.modules.async_utils import run_blocking
 
 _OVERSTATS_ROOT = _PLUGIN_DIR / "overstats"
 _RES_DIR = _OVERSTATS_ROOT / "res"
@@ -26,6 +27,17 @@ _PLUGIN_DATA_DIR = get_plugin_data_dir()
 _OVERSTATS_DATA_DIR = get_overstats_data_dir()
 _BINDINGS_PATH = _PLUGIN_DATA_DIR / "bindings.json"
 _TEMP_IMAGE_DIR = _PLUGIN_DATA_DIR / "temp"
+
+
+def _write_temp_image(content: bytes, suffix: str) -> Path:
+    _TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
+    img_path = _TEMP_IMAGE_DIR / f"{hash(content)}{suffix}"
+    img_path.write_bytes(content)
+    return img_path
+
+
+def _unlink_path(path: Path) -> None:
+    path.unlink(missing_ok=True)
 
 _CN_MODE_MAP = {"快速": "quick", "竞技": "competitive"}
 _CN_RANK_MAP = {
@@ -431,10 +443,10 @@ class OwDashenPlugin(Star):
     async def _ensure_query_tool_assets_ready(self) -> None:
         try:
             from overstats.src.modules.query_tool.service import ensure_query_tool_assets, load_query_tool
-            config = load_query_tool(force_refresh=False)
+            config = await run_blocking(load_query_tool, force_refresh=False)
             if not config:
                 return
-            await asyncio.to_thread(ensure_query_tool_assets, config)
+            await run_blocking(ensure_query_tool_assets, config)
         except Exception as e:
             logger.warning(f"[ow_dashen] 预加载 query_tool 素材失败，部分图片元素可能缺失: {e}")
 
@@ -571,11 +583,9 @@ class OwDashenPlugin(Star):
                 await event.send(MessageChain().message(fallback_text))
             return
         try:
-            _TEMP_IMAGE_DIR.mkdir(parents=True, exist_ok=True)
             media_type = str(getattr(rendered, "media_type", "image/png") or "image/png").lower()
             suffix = ".jpg" if media_type in {"image/jpeg", "image/jpg"} else ".png"
-            img_path = _TEMP_IMAGE_DIR / f"{hash(rendered.content)}{suffix}"
-            img_path.write_bytes(rendered.content)
+            img_path = await run_blocking(_write_temp_image, rendered.content, suffix)
             
             from astrbot.core.message.components import Image
             from astrbot.core.message.message_event_result import MessageChain
@@ -585,7 +595,7 @@ class OwDashenPlugin(Star):
             
             if self.config.get("output", {}).get("cleanup_temp_files", True):
                 try:
-                    img_path.unlink(missing_ok=True)
+                    await run_blocking(_unlink_path, img_path)
                 except Exception:
                     pass
         except Exception as e:

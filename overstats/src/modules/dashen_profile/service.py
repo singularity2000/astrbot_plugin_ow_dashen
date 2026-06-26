@@ -9,10 +9,12 @@ logger = logging.getLogger("astrbot")
 
 try:
     from overstats.src.client.apiclient import DashenAPIClient
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.errors import ModuleError
     from overstats.src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
 except ModuleNotFoundError:
     from src.client.apiclient import DashenAPIClient
+    from src.modules.async_utils import run_blocking
     from src.modules.errors import ModuleError
     from src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
 
@@ -72,7 +74,7 @@ class DashenProfileModule:
                     avatar_bytes=avatar_bytes,
                     render_mode=render_mode,
                 )
-                image = render_profile_summary(context)
+                image = await run_blocking(render_profile_summary, context)
             except RuntimeError as exc:
                 raise ModuleError(
                     error="render_dependency_missing",

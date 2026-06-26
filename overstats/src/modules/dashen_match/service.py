@@ -15,11 +15,13 @@ import httpx
 try:
     from overstats.config import config as app_config
     from overstats.src.client.apiclient import DashenAPIClient
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
     from overstats.src.modules.errors import ModuleError
 except ModuleNotFoundError:
     from config import config as app_config
     from src.client.apiclient import DashenAPIClient
+    from src.modules.async_utils import run_blocking
     from src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
     from src.modules.errors import ModuleError
 
@@ -212,7 +214,7 @@ class DashenMatchModule:
         query, resolved_bnet = await self._resolve_query(query)
         matches = await self.requests.list_recent_matches(query)
         full_id = resolved_bnet.full_id if resolved_bnet else (query.bnet_id or f"token:{query.customer_token}")
-        image = render_match_list(matches, full_id=full_id) if render else None
+        image = await run_blocking(render_match_list, matches, full_id=full_id) if render else None
         self._store_reply_context(query, resolved_bnet, matches)
         return DashenMatchListOutput(
             matches=matches,
@@ -254,7 +256,8 @@ class DashenMatchModule:
     ) -> DashenMatchDetailOutput:
         detail = await self.requests.get_match_detail(customer_token, match)
         image = (
-            render_match_detail(
+            await run_blocking(
+                render_match_detail,
                 detail.payload,
                 source_match=detail.source_match,
                 query_full_id=query_full_id,
@@ -284,7 +287,8 @@ class DashenMatchModule:
             )
         detail = await self.requests.get_match_detail(query.customer_token, matches[index])
         image = (
-            render_match_detail(
+            await run_blocking(
+                render_match_detail,
                 detail.payload,
                 source_match=detail.source_match,
                 query_full_id=resolved_bnet.full_id if resolved_bnet else query.bnet_id,
@@ -360,13 +364,15 @@ class DashenMatchModule:
         )
         query_bnet_id = (resolved_bnet.bnet_id if resolved_bnet else "") or (str(query.bnet_id or "") if query else "")
 
-        main_image = render_match_detail(
+        main_image = await run_blocking(
+            render_match_detail,
             detail.payload,
             source_match=detail.source_match or source_match,
             query_full_id=query_full_id,
             query_bnet_id=query_bnet_id,
         )
-        main_image = decorate_rendered_image_header(
+        main_image = await run_blocking(
+            decorate_rendered_image_header,
             main_image,
             query_full_id,
             bnet_id=query_bnet_id,
@@ -420,8 +426,18 @@ class DashenMatchModule:
                 query_full_id=query_full_id,
                 query_bnet_id=query_bnet_id,
             )
-            waterfall = render_all_players_waterfall(player_details, match_game_time_sec=detail_root.get("gameTimeSec"))
-            waterfall = decorate_rendered_image_header(waterfall, query_full_id, bnet_id=query_bnet_id, subtitle="全员详细数据")
+            waterfall = await run_blocking(
+                render_all_players_waterfall,
+                player_details,
+                match_game_time_sec=detail_root.get("gameTimeSec"),
+            )
+            waterfall = await run_blocking(
+                decorate_rendered_image_header,
+                waterfall,
+                query_full_id,
+                bnet_id=query_bnet_id,
+                subtitle="全员详细数据",
+            )
             replies.append(_image_reply(waterfall))
             if analyze:
                 analysis_result = await self._build_ai_analysis(
@@ -432,7 +448,8 @@ class DashenMatchModule:
                 if analysis_result.get("json") is not None:
                     json_data = dict(analysis_result["json"])
                     json_data["generated_at"] = time.strftime("%Y-%m-%d %H:%M", time.localtime())
-                    analysis_image = render_analysis_report(
+                    analysis_image = await run_blocking(
+                        render_analysis_report,
                         json_data,
                         target_hero_images=build_target_hero_icons(focus_detail["heroList"], size=40),
                         map_name=map_name_for_match(detail_root),
@@ -444,12 +461,19 @@ class DashenMatchModule:
                 else:
                     replies.append(_text_reply(analysis_result.get("fallback_text") or "AI锐评暂不可用。"))
         else:
-            detail_image = render_player_hero_detail(
+            detail_image = await run_blocking(
+                render_player_hero_detail,
                 query_full_id,
                 focus_detail,
                 match_game_time_sec=detail_root.get("gameTimeSec"),
             )
-            detail_image = decorate_rendered_image_header(detail_image, query_full_id, bnet_id=query_bnet_id, subtitle="英雄详细数据")
+            detail_image = await run_blocking(
+                decorate_rendered_image_header,
+                detail_image,
+                query_full_id,
+                bnet_id=query_bnet_id,
+                subtitle="英雄详细数据",
+            )
             replies.append(_image_reply(detail_image))
 
         return DashenMatchRepliesOutput(

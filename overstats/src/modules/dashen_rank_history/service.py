@@ -5,12 +5,14 @@ from typing import Any, Dict, List, Optional, Sequence
 
 try:
     from overstats.src.client.apiclient import DashenAPIClient
+    from overstats.src.modules.async_utils import run_blocking
     from overstats.src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
     from overstats.src.modules.dashen_profile import get_live_dashen_season
     from overstats.src.modules.errors import ModuleError
     from overstats.src.modules.season_config import get_dashen_history_start_season
 except ModuleNotFoundError:
     from src.client.apiclient import DashenAPIClient
+    from src.modules.async_utils import run_blocking
     from src.modules.bnet_search import BnetSearchModule, BnetSearchResult, bnet_search_module
     from src.modules.dashen_profile import get_live_dashen_season
     from src.modules.errors import ModuleError
@@ -81,7 +83,8 @@ class DashenRankHistoryModule:
         image = None
         if render:
             try:
-                image = render_rank_history(
+                image = await run_blocking(
+                    render_rank_history,
                     player_name=full_id or bnet_id or query.bnet_id or "Unknown",
                     subtitle=HISTORY_SUBTITLE,
                     seasons=seasons,
